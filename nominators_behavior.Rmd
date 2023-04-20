@@ -274,17 +274,17 @@ overall_nominators$bonded_changed_percent <- (overall_nominators$nr_amount_chang
 
 # Introduction
 
-This analysis investigates the behavior of nominators in the `r chain` network. To do so, their behavior can be tracked over consecutive sessions where they are uniquely identified by their `stash address`. In this dataset and for each session, we can observer their `bonded_amount` as well as a list of `targets` (i.e., their nominations). This allows to compare each session to the next and track changes that occur.
+This analysis gives insights into the behavior of nominators within the `r chain` network. Nominators are tracked across consecutive sessions using their unique stash address. Within this dataset, each session provides insight into the `bonded_amount` and a list of targets, representing the nominators' selected nominations. This approach enables a comparison between sessions, effectively monitoring any changes that occur over time.
 
 The following table illustrates the parameters of the analysis. Note, that there have been some outages in the data collection, but the analysis copes with that and minimizes the impact on the outcome quality.
 <table style="border-collapse:collapse;border-spacing:0" class="tg"><thead><tr><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Parameter</th><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Value</th></tr></thead><tbody><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Chain</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r chain`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">First Session</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r first_session`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Last Session</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r last_session`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Missing Tables</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="color:#905;background-color:#ddd">`r missing_tables`</span></td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Total number of unique nominators</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="color:#905;background-color:#ddd">`r nrow(overall_nominators)`</span></td></tr></tbody></table>
 
 # Changes over time
-This section investigates the changes over time in the bonded amount and the targets of each individual nominator.
+In this section, we examine the temporal fluctuations in both the bonded amount and the targets chosen by each nominator. This analysis helps to identify trends and patterns in the behavior of nominators over time.
 
 ### Bonded Amount: Histogram of changes
 
-The analysis focuses on the frequency of changes in the bonded amount. A change is only effective after a new election, which is held every `r number_session_per_era` sessions. Therefore, it makes sense to normalize the frequency to "per era" (instead of per session). In other words, if a nominator changes their bonded amount once over `r number_session_per_era` sessions, the frequency in the histogram would be 1. If a nominator changes their bonded_amount each session, it would be counted as 6.
+The analysis primarily emphasizes the frequency of alterations in the bonded amount. It is essential to note that changes only take effect following a new election, which occurs every `r number_session_per_era` sessions. To account for this, it is more meaningful to normalize the frequency on a "per era" basis rather than per session. In this context, if a nominator modifies their bonded amount once throughout `r number_session_per_era` sessions, the frequency in the histogram is represented as 1. Conversely, if a nominator adjusts their bonded_amount every session, the frequency is denoted as 6.
 
 ```{r, echo = FALSE}
 # Create histogram with ggplot2
@@ -294,7 +294,7 @@ ggplot(overall_nominators, aes(x = bonded_changed_percent)) +
        x = "Bonded Amount Changed Percentage", y = "Frequency")
 ```
 
-There are some outliers of nominators that very frequently adjust their bonded amount. Let's focus on those that lie between 0 and 1.
+There are a few outlier nominators who adjust their bonded amount with remarkable frequency. For the purpose of this analysis, we will concentrate on those with a frequency lying between 0 and 1, ensuring a more representative understanding of typical nominator behavior.
 
 ```{r, echo = FALSE}
 # Create histogram with ggplot2
@@ -306,7 +306,7 @@ ggplot(subset(overall_nominators, bonded_changed_percent <= 1), aes(x = bonded_c
 
 ### Bonded amount: Changes over sessions
 
-The following graph plots the changes in bonded amount over the sessions. The frequency is in absolute numbers, i.e., how many nominators changed their bonded_amount within each session. 
+The subsequent graph illustrates the variations in bonded amount across sessions. The frequency displayed is in absolute terms, representing the total number of nominators who altered their bonded_amount within each individual session. This visualization helps to convey the overall trends and patterns in nominators' behavior over time.
 
 ```{r, echo = FALSE}
 ggplot(subset(bonded_changed_per_session_aggregated, session != first_session), aes(x = session, y = average_nr_changes)) +
@@ -319,11 +319,10 @@ ggplot(subset(bonded_changed_per_session_aggregated, session != first_session), 
   theme(panel.grid.minor = element_blank())
 ```
 
-We can observe a high number of changes in the bonded amount, but this is mainly due to the fact that many nominators utilize the automatic re-bonding of staking rewards. It is difficult to distinguish manual changes of bonded amount from automatic ones. This could be approximated, however, given the size of the stash address and their resulting expected staking rewards per session. This is left open for now.
-
+We can observe a high number of changes in the bonded amount. However, this is primarily due to many nominators employing automatic re-bonding of staking rewards. Distinguishing manual changes in the bonded amount from automatic ones is challenging. An approximation could be made based on the stash address size and the expected staking rewards per session, but this is left unexplored for now.
 
 ## Targets
-This analysis is the most important part of nominator's behavior as it gives insights directly about their validator preferences and the frequency of updating their nominations. The following histogram plots the individual changes in targets over the nominators over the whole time frame. It is normalized over the number of sessions a nominator had been existent and per era. In other words, a value of 1 would mean that a nominator changed their targets once every six sessions that they were existent. Note that, compared to the `bonded_amount`, a change in targets is always manually triggered by a nominator and therefore is a a conscious behavior.
+This analysis forms the most crucial aspect of nominator behavior as it directly sheds light on their validator preferences and the frequency with which they update their nominations. The following histogram displays individual changes in targets across nominators over the entire time frame. The data is normalized by the number of sessions a nominator has been active and is presented on a per-era basis. In other words, a value of 1 signifies that a nominator altered their targets once every six sessions they were active. It is important to note that, in contrast to the `bonded_amount`, changes in targets are always manually initiated by nominators, reflecting conscious decision-making.
 
 ### Targets: Histogram of changes
 
@@ -335,7 +334,7 @@ ggplot(overall_nominators, aes(x = targets_changed_percent)) +
        x = "Targets Changed Percentage", y = "Frequency")
 ```
 
-Again, we have some outliers of nominators that very frequently change their targets, which decreases the readability of the graph. The following graph focuses on nominators that change their targets every six sessions between 0 and 100% of times.
+Once more, we encounter some outlier nominators who alter their targets with exceptional frequency, which hampers the graph's readability. To address this, the following graph narrows its focus to nominators who modify their targets between 0 and 100% of the time, specifically every six sessions. This refined visualization aids in better understanding the typical behavior of nominators in relation to their target changes.
 
 ```{r, echo = FALSE}
 # Create histogram with ggplot2
@@ -382,7 +381,7 @@ merged_aggregated$at_least_one_inactive <- ifelse(merged_aggregated$ratio < 1, 1
   
 ```
 
-The following histogram plots the ratio of active to inactive validators in the targets of the nominators. In contrast to the previous analyses, this investigates the current state of the network of the newest session (`r last_session`). Here, a ratio of 1 means that all the validators that a nominator is voting for are currently active.
+The subsequent histogram presents the ratio of active to inactive validators within the nominators' targets. Unlike previous analyses, this examination focuses on the current state of the network during the most recent session (`r last_session`). In this context, a ratio of 1 indicates that all validators a nominator is voting for are presently active. This insight offers an understanding of the overall alignment of nominator preferences with the active validator pool.
 
 ```{r, echo=FALSE}
 ggplot(merged_aggregated, aes(x = ratio)) +
