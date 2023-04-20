@@ -1,9 +1,9 @@
 ---
 title: "Nominators' Behavior"
 author: "Jonas Gehrlein @ Web3 Foundation"
-date: 27/03/2023
+date: 20/04/2023
 output: html_document
-version: "1.6"
+version: "1.0"
 ---
 
 
@@ -32,15 +32,19 @@ library(data.table)
 # Can be "polkadot" or "kusama"
 chain = "polkadot"
 
-# The eras to analyze.
-first_session = 6304 - 542
-#first_session <- 27911-200
-#last_session <- 27911+200
-last_session = 6304
+# The sessions to analyze.
+last_session = 6351
+first_session = last_session - 544
 
 
 # if we want not every era but every `time_offset` era. Using "1" means we include all eras. Using "2" would mean every second era etc.
 time_offset <- 1
+```
+
+```{r, echo=FALSE}
+# Parameters for Kusama
+#first_session <- 27911-200
+#last_session <- 27911+200
 ```
 
 ```{r, echo=FALSE, message=FALSE}
