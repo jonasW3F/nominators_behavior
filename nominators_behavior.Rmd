@@ -24,33 +24,51 @@ library(splitstackshape)
 library(RCurl)
 library(polkadotutils)
 library(data.table)
+library(googleCloudStorageR)
+library(bigrquery)
+library(httr)
+library(data.table)
+library(bit64)
 ```
 
 
-```{r, message=FALSE}
+```{r}
+# Set the OAuth scopes
+options(bigrquery.oauth.scopes = c("https://www.googleapis.com/auth/cloud-platform"))
+bigrquery::bq_auth(email = "jonas@web3.foundation", cache = TRUE)
+
+# Authenticate googleCloudStorageR using the token obtained by bigrquery
+gcs_auth(token = bq_token())
+```
+
+```{r, message=FALSE, echo = FALSE}
 # User Input
 # Can be "polkadot" or "kusama"
 chain = "polkadot"
 
-# The sessions to analyze.
-last_session = 6351
-first_session = last_session - 544
-
-
 # if we want not every era but every `time_offset` era. Using "1" means we include all eras. Using "2" would mean every second era etc.
-time_offset <- 1
+time_offset <- 7*6
+# The amount of tables that should be downloaded
+number_tables <- 100
+# The sessions to analyze.
+last_session = 9325
+first_session = last_session - time_offset * number_tables
+
+missing_tables <- 0
+
 ```
 
 ```{r, echo=FALSE}
-# Parameters for Kusama
-#first_session <- 27911-200
-#last_session <- 27911+200
+# Parameters to determine whether a change in bonded amount was due to auto-compound or an active choice. Here, we pretend that an increase by bonded_amount * APY / 365 is a compound. I.e., if the change from old to new balance is less than that, we pretend its not an active choice. Making APY higher increases the range where we pretend it was an auto compound.
+APY <- 0.18
+number_session_per_era <- 6  # Payout happens every 6 sessions
+payout_periods <- ceiling(time_offset / number_session_per_era)  # How many payout periods are covered by time_offset
+threshold <- 1 + payout_periods * (APY / 365)
 ```
 
 ```{r, echo=FALSE, message=FALSE}
 #Setting up the denomination KSM and (new) DOT:
 network_identifier = ifelse(chain == "polkadot", "DOT", "KSM")
-number_session_per_era <- 6
 
 if(chain=="polkadot"){
   normalization = 1/10000000000
@@ -75,134 +93,206 @@ old <- Sys.time() # get start time
 ```
 
 ```{r, echo=FALSE}
-initiate_data <- function(df_t0, df_t1) {
-  merged_df <- merge(df_t0, df_t1, all = TRUE, by = "stash_address", suffixes = c("_t0", "_t1"))
+initiate_data <- function(df_t0, df_t1, threshold) {
+  # Merge the data frames by stash_address
+  merged_df <- merge(df_t0, df_t1, by = "stash_address", all = TRUE, suffixes = c("_t0", "_t1"))
+
+  # Initialize the session_count based on whether session_t0 and session_t1 exist
+  merged_df$session_count <- ifelse(is.na(merged_df$session_t0) & !is.na(merged_df$session_t1), 1,
+                               ifelse(!is.na(merged_df$stash_address) & is.na(merged_df$session_t1), 1, 2))
   
-  merged_df$targets_changed <- vector("list", nrow(merged_df))
-  merged_df$bonded_amount_changed <- vector("list", nrow(merged_df))
-  merged_df$session_count <- 0
-  
-  for (i in 1:nrow(merged_df)) {
-    if (is.na(merged_df$session_t0[i]) && !is.na(merged_df$session_t1[i])) {
-      merged_df$targets_changed[[i]] <- c(merged_df$session_t1[i])
-      merged_df$bonded_amount_changed[[i]] <- c(merged_df$session_t1[i])
-      merged_df$session_count[i] <- 1
-    } else if (!is.na(merged_df$stash_address[i]) && is.na(merged_df$session_t1[i])) {
-      merged_df$targets_changed[[i]] <- c(merged_df$session_t0[i], df_t1$session[1])
-      merged_df$bonded_amount_changed[[i]] <- c(merged_df$session_t0[i], df_t1$session[1])
-      merged_df$session_count[i] <- 1
+  # Vectorized logic to identify targets_changed
+  merged_df$targets_changed <- mapply(function(t0, t1, s0, s1, df_t1_session) {
+    if (is.na(s0) && !is.na(s1)) {
+      return(list(s1))
+    } else if (!is.na(s0) && is.na(s1)) {
+      return(list(c(s0, df_t1_session)))
+    } else if (!is.na(t0) && t0 != t1) {
+      return(list(c(s0, s1)))
     } else {
-      if (!is.na(merged_df$targets_t0[i]) && merged_df$targets_t0[i] != merged_df$targets_t1[i]) {
-        merged_df$targets_changed[[i]] <- c(merged_df$session_t0[i], merged_df$session_t1[i])
-      } else {
-        merged_df$targets_changed[[i]] <- c(merged_df$session_t0[i])
-      }
-      
-      if (!is.na(merged_df$bonded_amount_t0[i]) && merged_df$bonded_amount_t0[i] != merged_df$bonded_amount_t1[i]) {
-        merged_df$bonded_amount_changed[[i]] <- c(merged_df$session_t0[i], merged_df$session_t1[i])
-      } else {
-        merged_df$bonded_amount_changed[[i]] <- c(merged_df$session_t0[i])
-      }
-      
-      merged_df$session_count[i] <- 2
+      return(list(s0))
     }
-  }
-  
-  final_df <- data.frame(stash_address = merged_df$stash_address,
-                         targets = ifelse(is.na(merged_df$session_t1), NA, ifelse(is.na(merged_df$targets_t1), merged_df$targets_t0, merged_df$targets_t1)),
-                         bonded_amount = ifelse(is.na(merged_df$session_t1), NA, ifelse(is.na(merged_df$bonded_amount_t1), merged_df$bonded_amount_t0, merged_df$bonded_amount_t1)),
-                         targets_changed = I(merged_df$targets_changed),
-                         bonded_amount_changed = I(merged_df$bonded_amount_changed),
-                         session_count = merged_df$session_count,
-                         session = merged_df$session_t1)
-  
+  }, merged_df$targets_t0, merged_df$targets_t1, merged_df$session_t0, merged_df$session_t1, MoreArgs = list(df_t1$session[1]))
+
+  # Vectorized logic to identify bonded_amount_changed based on the new condition
+  merged_df$bonded_amount_changed <- mapply(function(b0, b1, s0, s1, df_t1_session) {
+    # Case when the old session is missing and the new session exists
+    if (is.na(s0) && !is.na(s1)) {
+      return(list(s1))  # New entry, track the new session
+    # Case when the old session exists but the new session is missing
+    } else if (!is.na(s0) && is.na(s1)) {
+      return(list(c(s0, df_t1_session)))  # Old entry dropped, track the session
+    # Case when the balance increases and we need to check the threshold
+    } else if (!is.na(b0) && b1 > b0) {
+      if (b1 > b0 * threshold) {
+        return(list(c(s0, s1)))  # Trigger change if the increase exceeds the threshold
+      } else {
+        return(list(s0))  # No significant change
+      }
+    # Case when the balance decreases, always trigger a change
+    } else if (!is.na(b0) && b1 < b0) {
+      return(list(c(s0, s1)))  # Balance decreased, track the session
+    # Case when no change has occurred
+    } else {
+      return(list(s0))  # No change
+    }
+  }, 
+  merged_df$bonded_amount_t0, 
+  merged_df$bonded_amount_t1, 
+  merged_df$session_t0, 
+  merged_df$session_t1, 
+  MoreArgs = list(df_t1$session[1])
+)
+
+
+  # Create the final data frame
+  final_df <- data.frame(
+    stash_address = merged_df$stash_address,
+    targets = ifelse(is.na(merged_df$session_t1), NA, 
+                     ifelse(is.na(merged_df$targets_t1), merged_df$targets_t0, merged_df$targets_t1)),
+    bonded_amount = ifelse(is.na(merged_df$session_t1), NA, 
+                           ifelse(is.na(merged_df$bonded_amount_t1), merged_df$bonded_amount_t0, merged_df$bonded_amount_t1)),
+    targets_changed = I(merged_df$targets_changed),
+    bonded_amount_changed = I(merged_df$bonded_amount_changed),
+    session_count = merged_df$session_count,
+    session = merged_df$session_t1
+  )
+
   return(final_df)
 }
 ```
 
 ```{r, echo = FALSE}
-# This function takes the output table of `initiate_data` and updates it with the information of the next session data. The function checks whether the bonded_amount and targets entry for each nominator did change between the current session and the next session. If so, it adds an entry of which session those variables changed to the respective variables.
-update_data <- function(initial_data, new_data) {
-  merged_df <- merge(initial_data, new_data, all = TRUE, by = "stash_address", suffixes = c("_old", "_new"))
-  
-  for (i in seq_len(nrow(merged_df))) {
-    if (!is.na(merged_df$session_old[i]) && !is.na(merged_df$session_new[i])) {
-      if (merged_df$targets_old[i] != merged_df$targets_new[i]) {
-        merged_df$targets_changed[[i]] <- append(merged_df$targets_changed[[i]], merged_df$session_new[i])
+update_data <- function(initial_data, new_data, threshold) {
+  # Ensure that stash_address is unique in both data sets
+  initial_data <- initial_data[!duplicated(initial_data$stash_address), ]
+  new_data <- new_data[!duplicated(new_data$stash_address), ]
+
+  # Merge the initial and new data frames by stash_address (left join)
+  merged_df <- merge(initial_data, new_data, by = "stash_address", all.x = TRUE, suffixes = c("_old", "_new"))
+
+  # Vectorized update of targets_changed using mapply
+  merged_df$targets_changed <- mapply(function(t_old, t_new, s_old, s_new, changed_list, new_session) {
+    if (!is.na(s_old) && !is.na(s_new)) {
+      if (t_old != t_new) {
+        # Ensure we don't duplicate session entries in changed_list
+        if (!(s_new %in% changed_list)) {
+          return(append(changed_list, s_new))
+        } else {
+          return(changed_list)
+        }
+      } else {
+        return(changed_list)
       }
-      if (merged_df$bonded_amount_old[i] != merged_df$bonded_amount_new[i]) {
-        merged_df$bonded_amount_changed[[i]] <- append(merged_df$bonded_amount_changed[[i]], merged_df$session_new[i])
-      }
-      merged_df$session_count[i] <- merged_df$session_count[i] + 1
-    } else if (is.na(merged_df$session_old[i]) && !is.na(merged_df$session_new[i])) {
-      merged_df$targets_changed[[i]] <- c(merged_df$session_new[i])
-      merged_df$bonded_amount_changed[[i]] <- c(merged_df$session_new[i])
-      merged_df$session_count[i] <- 1
-    } else if (!is.na(merged_df$session_old[i]) && is.na(merged_df$session_new[i])) {
-      merged_df$targets_changed[[i]] <- append(merged_df$targets_changed[[i]], new_data$session[1])
-      merged_df$bonded_amount_changed[[i]] <- append(merged_df$bonded_amount_changed[[i]], new_data$session[1])
+    } else if (is.na(s_old) && !is.na(s_new)) {
+      return(c(s_new))  # New session entry
+    } else if (!is.na(s_old) && is.na(s_new)) {
+      return(append(changed_list, new_session))  # Old session entry dropped
+    } else {
+      return(changed_list)
     }
-  }
-  
-  final_df <- data.frame(stash_address = merged_df$stash_address,
-                         targets = ifelse(is.na(merged_df$session_new), merged_df$targets_old, merged_df$targets_new),
-                         bonded_amount = ifelse(is.na(merged_df$session_new), merged_df$bonded_amount_old, merged_df$bonded_amount_new),
-                         targets_changed = I(merged_df$targets_changed),
-                         bonded_amount_changed = I(merged_df$bonded_amount_changed),
-                         session_count = merged_df$session_count,
-                         session = merged_df$session_new,
-                         stringsAsFactors = FALSE)
-  
+  }, merged_df$targets_old, merged_df$targets_new, merged_df$session_old, merged_df$session_new, merged_df$targets_changed, MoreArgs = list(new_data$session[1]))
+
+  # Vectorized update of bonded_amount_changed using mapply
+  merged_df$bonded_amount_changed <- mapply(function(b_old, b_new, s_old, s_new, changed_list, new_session) {
+    if (!is.na(s_old) && !is.na(s_new)) {
+      if (b_new > b_old * threshold) {
+        if (!(s_new %in% changed_list)) {
+          return(append(changed_list, s_new))  # Trigger change if balance increased and exceeded threshold
+        } else {
+          return(changed_list)
+        }
+      } else if (b_new < b_old) {
+        if (!(s_new %in% changed_list)) {
+          return(append(changed_list, s_new))  # Balance decreased, always trigger change
+        } else {
+          return(changed_list)
+        }
+      } else {
+        return(changed_list)  # No significant change
+      }
+    } else if (is.na(s_old) && !is.na(s_new)) {
+      return(c(s_new))  # New session entry
+    } else if (!is.na(s_old) && is.na(s_new)) {
+      return(append(changed_list, new_session))  # Old session entry dropped
+    } else {
+      return(changed_list)
+    }
+  }, merged_df$bonded_amount_old, merged_df$bonded_amount_new, merged_df$session_old, merged_df$session_new, merged_df$bonded_amount_changed, MoreArgs = list(new_data$session[1]))
+
+  # Update the session count
+  merged_df$session_count <- ifelse(!is.na(merged_df$session_old) & !is.na(merged_df$session_new),
+                                    merged_df$session_count + 1,
+                                    ifelse(is.na(merged_df$session_old) & !is.na(merged_df$session_new), 1, merged_df$session_count))
+
+  # Create the final data frame
+  final_df <- data.frame(
+    stash_address = merged_df$stash_address,
+    targets = ifelse(is.na(merged_df$session_new), merged_df$targets_old, merged_df$targets_new),
+    bonded_amount = ifelse(is.na(merged_df$session_new), merged_df$bonded_amount_old, merged_df$bonded_amount_new),
+    targets_changed = I(merged_df$targets_changed),
+    bonded_amount_changed = I(merged_df$bonded_amount_changed),
+    session_count = merged_df$session_count,
+    session = merged_df$session_new,
+    stringsAsFactors = FALSE
+  )
+
   return(final_df)
 }
 ``` 
 
 ```{r, echo=FALSE}
-missing_tables <- 0
-nominators_found <- TRUE
-
 # To get a vector of sessions that were found (excluding those that have no data)
-sessions_exist <- sessions
-
-assert(url.exists(paste("https://storage.googleapis.com/watcher-csv-exporter/", chain , "_nominators_session_", first_session, ".csv", sep=(""))))
 # Getting the first data frame to start the process
-nominators_t0 <- getStakingData("nominators", "session", sessions[1], chain, "online")
+nominators_t0 <- getStakingDataNew("nominators", "session", sessions[1], chain, "online", TRUE)
 ```
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
-# Starting the loop at index 2 since we already got the first data frame manually.
-for(i in 2:length(sessions)) {
-  message(paste0("loop in session ", sessions[i] ))
-
-  tryCatch(
-  nominators_next <- read.csv(paste("~/Documents/Projects/staking-data/", chain , "_nominators_session_", sessions[i], ".csv", sep=("")), encoding = "UTF-8"),
-  error = function(e){
-    nominators_found <<- FALSE
-    message(paste0("error in ", sessions[i]))
-    })
+for (i in 2:length(sessions)) {
+  message(paste0("Processing session: ", sessions[i]))
   
-  # One additional check if the nominators_next table is good. For example, session 5779 exists but the table is empty, which causes every nominator to get a change variable wrongly. With this, we skip empty tables (that are very rare it seems).
-  if(is.na(nominators_next$era[1])){
-    nominators_found = FALSE
-  }
-   
-  if(nominators_found == FALSE){
-      # Remove era that is missing from the eras list
-      sessions_exist <- sessions[! sessions %in% c(sessions[i])]
-      message(paste0("Session ", sessions[i], " missing, skipping"))
-      # Track missing tables
-      missing_tables <- missing_tables + 1
-      # Reset flags
-      nominators_found = TRUE
-      # Skip rest of the execution and go for next iteration 
-      next
-  }
-  if(i == 2){
-    overall_nominators <- initiate_data(nominators_t0, nominators_next)
-    } else {
-    overall_nominators <- update_data(overall_nominators, nominators_next)
+  # Try to download the next session's nominator data
+  nominators_next <- tryCatch(
+    {
+      getStakingDataNew("nominators", "session", sessions[i], chain, "online", TRUE)
+    },
+    error = function(e) {
+      message(paste("Error in session", sessions[i], "- skipping. Error message:", e$message))
+      missing_tables <<- missing_tables + 1  # Increment the missing tables counter
+      return(NULL)  # Return NULL to indicate failure
     }
+  )
+  
+  # Skip this iteration if nominators_next is NULL (data couldn't be downloaded)
+  if (is.null(nominators_next)) {
+    next
+  }
+  
+  # If we are in the second iteration, initialize the data
+  if (i == 2) {
+    overall_nominators <- initiate_data(nominators_t0, nominators_next, threshold)
+  } else {
+    overall_nominators <- update_data(overall_nominators, nominators_next, threshold)
+  }
+  
+  # Save intermediate results to avoid excessive memory usage
+  if (i %% 10 == 0) {
+    saveRDS(overall_nominators, file = paste0("overall_nominators_session_", i, ".rds"))
+    message(paste("Saved intermediate results at session", i))
+  }
+  
+  # Explicitly call garbage collection to free memory
+  gc()
+
+  # Optionally, remove intermediate data
+  rm(nominators_next)
 }
+
+# Final message indicating how many tables were missing
+message(paste("Total missing tables:", missing_tables))
+# No need to keep the expensive column
+overall_nominators <- overall_nominators %>%
+  select(-targets)
 
 # print elapsed time
 new <- Sys.time() - old # calculate difference
@@ -362,8 +452,8 @@ ggplot(subset(targets_changed_per_session_aggregated, session != first_session),
 # Nomination of inactive validators
 
 ```{r, echo = FALSE}
-newest_nominators <- polkadotutils::getStakingData("nominators", "session", last_session, chain, "online")
-newest_validators <- polkadotutils::getStakingData("validators", "session", last_session, chain, "online")
+newest_nominators <- polkadotutils::getStakingDataNew("nominators", "session", last_session, chain, "online", TRUE)
+newest_validators <- polkadotutils::getStakingDataNew("validators", "session", last_session, chain, "online", TRUE)
 
 # Unnest the targets column for each nominator and create a new data frame that has a row for each entry in "targets".
 nominators_unnested <- subset(newest_nominators, select = c("stash_address", "targets")) %>%
