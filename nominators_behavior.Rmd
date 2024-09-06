@@ -47,9 +47,9 @@ gcs_auth(token = bq_token())
 chain = "polkadot"
 
 # if we want not every era but every `time_offset` era. Using "1" means we include all eras. Using "2" would mean every second era etc.
-time_offset <- 7*6
+time_offset <- 7*6*36
 # The amount of tables that should be downloaded
-number_tables <- 100
+number_tables <- 5
 # The sessions to analyze.
 last_session = 9325
 first_session = last_session - time_offset * number_tables
@@ -94,7 +94,7 @@ old <- Sys.time() # get start time
 
 ```{r, echo=FALSE}
 initiate_data <- function(df_t0, df_t1, threshold) {
-  # Merge the data frames by stash_address
+  # Full outer join between df_t0 and df_t1 by stash_address
   merged_df <- merge(df_t0, df_t1, by = "stash_address", all = TRUE, suffixes = c("_t0", "_t1"))
 
   # Initialize the session_count based on whether session_t0 and session_t1 exist
@@ -114,25 +114,20 @@ initiate_data <- function(df_t0, df_t1, threshold) {
     }
   }, merged_df$targets_t0, merged_df$targets_t1, merged_df$session_t0, merged_df$session_t1, MoreArgs = list(df_t1$session[1]))
 
-  # Vectorized logic to identify bonded_amount_changed based on the new condition
+  # Vectorized logic to identify bonded_amount_changed
   merged_df$bonded_amount_changed <- mapply(function(b0, b1, s0, s1, df_t1_session) {
-    # Case when the old session is missing and the new session exists
     if (is.na(s0) && !is.na(s1)) {
       return(list(s1))  # New entry, track the new session
-    # Case when the old session exists but the new session is missing
     } else if (!is.na(s0) && is.na(s1)) {
       return(list(c(s0, df_t1_session)))  # Old entry dropped, track the session
-    # Case when the balance increases and we need to check the threshold
     } else if (!is.na(b0) && b1 > b0) {
       if (b1 > b0 * threshold) {
         return(list(c(s0, s1)))  # Trigger change if the increase exceeds the threshold
       } else {
         return(list(s0))  # No significant change
       }
-    # Case when the balance decreases, always trigger a change
     } else if (!is.na(b0) && b1 < b0) {
       return(list(c(s0, s1)))  # Balance decreased, track the session
-    # Case when no change has occurred
     } else {
       return(list(s0))  # No change
     }
@@ -143,7 +138,6 @@ initiate_data <- function(df_t0, df_t1, threshold) {
   merged_df$session_t1, 
   MoreArgs = list(df_t1$session[1])
 )
-
 
   # Create the final data frame
   final_df <- data.frame(
@@ -168,16 +162,15 @@ update_data <- function(initial_data, new_data, threshold) {
   initial_data <- initial_data[!duplicated(initial_data$stash_address), ]
   new_data <- new_data[!duplicated(new_data$stash_address), ]
 
-  # Merge the initial and new data frames by stash_address (left join)
-  merged_df <- merge(initial_data, new_data, by = "stash_address", all.x = TRUE, suffixes = c("_old", "_new"))
+  # Full outer join (all = TRUE) to retain all nominators
+  merged_df <- merge(initial_data, new_data, by = "stash_address", all = TRUE, suffixes = c("_old", "_new"))
 
-  # Vectorized update of targets_changed using mapply
+  # Vectorized update of targets_changed
   merged_df$targets_changed <- mapply(function(t_old, t_new, s_old, s_new, changed_list, new_session) {
     if (!is.na(s_old) && !is.na(s_new)) {
       if (t_old != t_new) {
-        # Ensure we don't duplicate session entries in changed_list
         if (!(s_new %in% changed_list)) {
-          return(append(changed_list, s_new))
+          return(append(changed_list, s_new))  # Add session if target changed
         } else {
           return(changed_list)
         }
@@ -193,7 +186,7 @@ update_data <- function(initial_data, new_data, threshold) {
     }
   }, merged_df$targets_old, merged_df$targets_new, merged_df$session_old, merged_df$session_new, merged_df$targets_changed, MoreArgs = list(new_data$session[1]))
 
-  # Vectorized update of bonded_amount_changed using mapply
+  # Vectorized update of bonded_amount_changed
   merged_df$bonded_amount_changed <- mapply(function(b_old, b_new, s_old, s_new, changed_list, new_session) {
     if (!is.na(s_old) && !is.na(s_new)) {
       if (b_new > b_old * threshold) {
@@ -204,7 +197,7 @@ update_data <- function(initial_data, new_data, threshold) {
         }
       } else if (b_new < b_old) {
         if (!(s_new %in% changed_list)) {
-          return(append(changed_list, s_new))  # Balance decreased, always trigger change
+          return(append(changed_list, s_new))  # Trigger change if balance decreased
         } else {
           return(changed_list)
         }
@@ -241,10 +234,66 @@ update_data <- function(initial_data, new_data, threshold) {
 }
 ``` 
 
+```{r}
+calculate_days_since_change <- function(overall_nominators, session_timestamps) {
+  # Get the timestamp of the most recent session as the reference
+  latest_session <- max(as.numeric(names(session_timestamps)))
+  reference_timestamp <- session_timestamps[[as.character(latest_session)]]
+
+  # Calculate days since last bonded amount change
+  overall_nominators$days_since_bonded_amount_changed <- sapply(overall_nominators$bonded_amount_changed, function(changed_list) {
+    # Find the highest session in the bonded_amount_changed list
+    if (length(changed_list) > 0) {
+      last_change_session <- max(unlist(changed_list))
+      # Look up the timestamp of the highest session
+      last_change_timestamp <- session_timestamps[[as.character(last_change_session)]]
+      if (!is.null(last_change_timestamp)) {
+        # Calculate the difference in days between the last change timestamp and the reference timestamp
+        as.numeric(difftime(as.POSIXct(reference_timestamp, origin = "1970-01-01", tz = "UTC"), 
+                            as.POSIXct(last_change_timestamp, origin = "1970-01-01", tz = "UTC"), 
+                            units = "days"))
+      } else {
+        return(NA)
+      }
+    } else {
+      return(NA)
+    }
+  })
+
+  # Calculate days since last target change
+  overall_nominators$days_since_target_changed <- sapply(overall_nominators$targets_changed, function(changed_list) {
+    # Find the highest session in the targets_changed list
+    if (length(changed_list) > 0) {
+      last_change_session <- max(unlist(changed_list))
+      # Look up the timestamp of the highest session
+      last_change_timestamp <- session_timestamps[[as.character(last_change_session)]]
+      if (!is.null(last_change_timestamp)) {
+        # Calculate the difference in days between the last change timestamp and the reference timestamp
+        as.numeric(difftime(as.POSIXct(reference_timestamp, origin = "1970-01-01", tz = "UTC"), 
+                            as.POSIXct(last_change_timestamp, origin = "1970-01-01", tz = "UTC"), 
+                            units = "days"))
+      } else {
+        return(NA)
+      }
+    } else {
+      return(NA)
+    }
+  })
+
+  return(overall_nominators)
+}
+```
+
+
 ```{r, echo=FALSE}
 # To get a vector of sessions that were found (excluding those that have no data)
 # Getting the first data frame to start the process
 nominators_t0 <- getStakingDataNew("nominators", "session", sessions[1], chain, "online", TRUE)
+
+session_timestamps <- list()
+
+# Manually add the first session timestamp from nominators_t0
+session_timestamps[[as.character(nominators_t0$session[1])]] <- nominators_t0$timestamp[1] / 1000  # Convert from milliseconds to seconds
 ```
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
@@ -267,7 +316,8 @@ for (i in 2:length(sessions)) {
   if (is.null(nominators_next)) {
     next
   }
-  
+  session_timestamps[[as.character(nominators_next$session[1])]] <- nominators_next$timestamp[1] / 1000  # Convert from milliseconds to seconds
+
   # If we are in the second iteration, initialize the data
   if (i == 2) {
     overall_nominators <- initiate_data(nominators_t0, nominators_next, threshold)
@@ -297,6 +347,14 @@ overall_nominators <- overall_nominators %>%
 # print elapsed time
 new <- Sys.time() - old # calculate difference
 print(new) # print in nice format
+```
+
+```{r}
+overall_nominators <- calculate_days_since_change(overall_nominators, session_timestamps)
+
+# Add an indicator to the full list of all nominators ever present of which are the current nominators.
+overall_nominators <- overall_nominators %>%
+  mutate(current_set = if_else(stash_address %in% newest_nominators$stash_address, 1, 0))
 ```
 
 ```{r, echo=FALSE}
