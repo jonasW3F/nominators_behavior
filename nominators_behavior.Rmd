@@ -28,7 +28,7 @@ library(bit64)
 ```
 
 
-```{r}
+```{r, echo = FALSE}
 # Set the OAuth scopes
 options(bigrquery.oauth.scopes = c("https://www.googleapis.com/auth/cloud-platform"))
 bigrquery::bq_auth(email = "jonas@web3.foundation", cache = TRUE)
@@ -45,9 +45,9 @@ chain = "polkadot"
 # if we want not every session but every `time_offset` session Using "1" means we include all sessions. Using "2" would mean every second session etc. Since 6 sessions is one day, we can basically determine the days with 6*DAYS.
 time_offset <- 6*7
 # The amount of tables that should be downloaded
-number_tables <- 190
+number_tables <- 37*6
 # The sessions to analyze.
-last_session = 9325
+last_session = 9406
 first_session = last_session - time_offset * number_tables
 
 difference = last_session - first_session 
@@ -252,9 +252,7 @@ filter_nominators <- function(input_df) {
 }
 ```
 
-
-
-```{r}
+```{r, echo = FALSE}
 calculate_days_since_change <- function(overall_nominators, session_timestamps) {
   # Get the timestamp of the most recent session as the reference
   latest_session <- max(as.numeric(names(session_timestamps)))
@@ -304,12 +302,16 @@ calculate_days_since_change <- function(overall_nominators, session_timestamps) 
 }
 ```
 
-
 ```{r, echo=FALSE}
-# To get a vector of sessions that were found (excluding those that have no data)
-# Getting the first data frame to start the process
+# Getting the first nominators data set to start the process
 nominators_t0 <- getStakingDataNew("nominators", "session", sessions[1], chain, "online", TRUE)
 
+# Getting the newest validator information (which we need later)
+validator_newest <- polkadotutils::getStakingDataNew("validators", "session", last_session, chain, "online", TRUE)
+# Collect some garbage
+gc()
+
+# We'll keep the timestamps of the different sessions in the future to be able to calculate when they last interacted (in days)
 session_timestamps <- list()
 
 # Manually add the first session timestamp from nominators_t0
@@ -353,45 +355,38 @@ for (i in 2:length(sessions)) {
   
   # Explicitly call garbage collection to free memory
   gc()
+  
+  if(i == length(sessions)){
+    nominators_newest <- nominators_next
+  }
 
-  # Optionally, remove intermediate data
+  # Remove intermediate data
   rm(nominators_next)
 }
 
-# Final message indicating how many tables were missing
-message(paste("Total missing tables:", missing_tables))
-# No need to keep the expensive column
+# Remove some expensive columns that are not needed.
 overall_nominators <- overall_nominators %>%
   select(-targets)
 
-# print elapsed time
-new <- Sys.time() - old # calculate difference
-print(new) # print in nice format
+# Print elapsed time of data collection
+new <- Sys.time() - old 
+print(new)
 ```
 
-```{r}
-newest_nominators <- polkadotutils::getStakingDataNew("nominators", "session", last_session, chain, "online", TRUE)
-gc()
-validator_newest <- polkadotutils::getStakingDataNew("validators", "session", last_session, chain, "online", TRUE)
-gc()
-
+```{r, echo = FALSE}
+# Add information about the last change (both in bonded_amount and targets) based on the "newest" session they did a change relative to the newest session timestamp.
 overall_nominators <- calculate_days_since_change(overall_nominators, session_timestamps)
 
 # Add an indicator to the full list of all nominators ever present of which are the current nominators.
 overall_nominators <- overall_nominators %>%
-  mutate(current_set = if_else(stash_address %in% newest_nominators$stash_address, 1, 0))
+  mutate(current_set = if_else(stash_address %in% nominators_newest$stash_address, 1, 0))
 ```
 
 ```{r, echo=FALSE}
-# ------------------------ General data manipulation --------------------------
-
-## Bonded Amount changes
-# Getting the number of entries in the list to know how many changes occurred
+# Here we count the number of sessions in the list of changes that we made.
 for(i in 1:nrow(overall_nominators)){
   overall_nominators$nr_amount_changed[i] <- length(overall_nominators$bonded_amount_changed[i][[1]])
 }
-
-# Getting the number of entries in the list to know how many changes occurred
 for(i in 1:nrow(overall_nominators)){
   overall_nominators$nr_targets_changed[i] <- length(overall_nominators$targets_changed[i][[1]])
 }
@@ -400,8 +395,9 @@ overall_nominators$total_changes <- overall_nominators$nr_amount_changed + overa
 ```
 
 ```{r echo = FALSE}
-## Analysis Targets Change
+# Here we calculate how often a change occured per session.
 
+## Analysis Targets Change
 # Create a dataframe that unnests the list of sessions per nominator and aggregates the number of changes on session level
 targets_changed_per_session <- overall_nominators %>%
   select(stash_address, targets_changed) %>%
@@ -421,9 +417,7 @@ for(i in 1:nrow(targets_changed_per_session_aggregated)){
 targets_changed_per_session_aggregated$average_nr_changes <- targets_changed_per_session_aggregated$number_changes / targets_changed_per_session_aggregated$distance
 # The percentage of changes in the targets of a nominator. Since we count the first appearance of a nominator as a change in target, we substract it here. And since this is session data, a reasonable time frame to change something would be once per era at maximum. 
 overall_nominators$targets_changed_percent <- (overall_nominators$nr_targets_changed - 1) / (overall_nominators$session_count/number_session_per_era)
-```
 
-```{r, echo = FALSE}
 # Analysis Bonded Amount Change
 bonded_changed_per_session <- overall_nominators %>%
   select(stash_address, bonded_amount_changed) %>%
@@ -445,31 +439,24 @@ bonded_changed_per_session_aggregated$average_nr_changes <- bonded_changed_per_s
 overall_nominators$bonded_changed_percent <- (overall_nominators$nr_amount_changed - 1) / (overall_nominators$session_count/number_session_per_era)
 ```
 
-```{r}
-overall_nominators_active <- overall_nominators %>%
-  filter(current_set == 1) %>%
-  mutate(
-    staleness_level = case_when(
-      days_since_target_changed <= 14 ~ 1,   # Level 1: 0-14 days
-      days_since_target_changed >= 15 & days_since_target_changed <= 30 ~ 2,  # Level 2: 15-30 days
-      days_since_target_changed >= 31 & days_since_target_changed <= 90 ~ 3,  # Level 3: 31-90 days
-      days_since_target_changed >= 91 & days_since_target_changed <= 180 ~ 4, # Level 4: 91-180 days
-      days_since_target_changed >= 181 ~ 5,  # Level 5: 181+ days
-      TRUE ~ NA_real_  # Handle cases where days_since_target_changed is NA
-    )
-  )
+
+```{r, echo = FALSE}
+# Here, we calculate take the information about the staleness of the nominators and cross-reference it with their validators to understand how much backing of a validator is composed of different levels of staleness of nominations.
 
 # We extract the stakers of every validator and span them out into a new data set where each of these stakers have their own row. We keep a column with their validator, bonded amount and their own stash address
 validator_stakers_filtered <- filter_nominators(validator_newest)
 validator_stakers_filtered$bonded_amount <- normalize(validator_stakers_filtered$bonded_amount, "p")
 
+overall_nominators_active <- overall_nominators %>%
+  filter(current_set == 1)
+
 # We now merge the previous data set with the staleness data we obtained before
 validator_nominators_merged <- validator_stakers_filtered %>%
-  left_join(overall_nominators_active[, c("stash_address", "days_since_target_changed", "staleness_level")], 
+  left_join(overall_nominators_active[, c("stash_address", "days_since_target_changed")], 
             by = "stash_address")
 # Keep only the relevant columns for analysis
 validator_nominators_staleness <- validator_nominators_merged %>%
-  select(validator_address, stash_address, bonded_amount, staleness_level, days_since_target_changed)
+  select(validator_address, stash_address, bonded_amount, days_since_target_changed)
 
 
 validator_nominators_extended <- validator_nominators_staleness %>%
@@ -477,9 +464,6 @@ validator_nominators_extended <- validator_nominators_staleness %>%
             by = c("validator_address" = "stash_address"))
 
 rm(validator_nominators_staleness, validator_nominators_merged)
-
-options(scipen = 999)
-
 
 validator_nominators_extended <- validator_nominators_extended %>%
   mutate(nominator_stake = total_stake - self_stake) %>%
@@ -499,15 +483,7 @@ validator_staleness_summary <- validator_nominators_extended %>%
   summarise(weighted_avg_days_since_change = sum(weighted_days_since_change, na.rm = TRUE))
 ```
 
-```{r}
-ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
-  geom_density(fill = "blue", alpha = 0.4) +
-  labs(title = "Density Plot of Weighted Average Days Since Change", 
-       x = "Weighted Average Days Since Change") +
-  theme_minimal()
-```
-
-```{r}
+```{r, echo = FALSE}
 # Step 1: Compute the density using the density function
 density_data <- density(validator_staleness_summary$weighted_avg_days_since_change, na.rm = TRUE)
 
@@ -520,11 +496,17 @@ total_density_above_180 <- sum(density_values_above_180) * (density_data$x[2] - 
 
 # Display the result
 total_density_above_180
+
+ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
+  geom_density(fill = "blue", alpha = 0.4) +
+  labs(title = "Density Plot of Weighted Average Days Since Change", 
+       x = "Weighted Average Days Since Change") +
+  theme_minimal()
 ```
 
 # Introduction
 
-This analysis gives insights into the behavior of nominators within the `r chain` network. Nominators are tracked across consecutive sessions using their unique stash address. Within this dataset, each session provides insight into the `bonded_amount` and a list of targets, representing the nominators' selected nominations. This approach enables a comparison between sessions, effectively monitoring any changes that occur over time.
+This analysis gives insights into the behavior of nominators within the `r chain` network. Nominators are tracked across consecutive sessions using their unique stash address. The main motivation for this analysis is to get an understanding about how often nominators are updating their targets, i.e., make a new selection of validators, and understand how much backing of validators comes from these different types of nominators. The main outcome for the analysis is the days that have passed since a nominator last updated their targets.
 
 The following table illustrates the parameters of the analysis. Note, that there have been some outages in the data collection, but the analysis copes with that and minimizes the impact on the outcome quality.
 <table style="border-collapse:collapse;border-spacing:0" class="tg"><thead><tr><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Parameter</th><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Value</th></tr></thead><tbody><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Chain</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r chain`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">First Session</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r first_session`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Last Session</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r last_session`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Missing Tables</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="color:#905;background-color:#ddd">`r missing_tables`</span></td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Total number of unique nominators</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="color:#905;background-color:#ddd">`r nrow(overall_nominators)`</span></td></tr></tbody></table>
@@ -613,12 +595,12 @@ ggplot(subset(targets_changed_per_session_aggregated, session != first_session),
 
 ```{r, echo = FALSE}
 # Unnest the targets column for each nominator and create a new data frame that has a row for each entry in "targets".
-nominators_unnested <- subset(newest_nominators, select = c("stash_address", "targets")) %>%
+nominators_unnested <- subset(nominators_newest, select = c("stash_address", "targets")) %>%
     separate_rows(targets, sep = ",")
 
 colnames(nominators_unnested) <- c("nominator_stash", "stash_address")
 
-merged <- merge(nominators_unnested, subset(newest_validators, select = c("stash_address", "active")), by = "stash_address", all = TRUE)
+merged <- merge(nominators_unnested, subset(validator_newest, select = c("stash_address", "active")), by = "stash_address", all = TRUE)
 merged$counter <- 1
 
 merged_aggregated <- aggregate(cbind(active, counter) ~ nominator_stash, data = merged, FUN = sum, na.rm = TRUE)
