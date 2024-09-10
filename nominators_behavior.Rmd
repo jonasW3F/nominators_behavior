@@ -9,7 +9,6 @@ version: "1.0"
 
 ```{r setup, fig.width=4, fig.height=3, warning=FALSE, message=FALSE, echo=FALSE}
 # Load the required R packages:
-library(plyr)
 library(dplyr)
 library(rmarkdown)
 library(ggplot2)
@@ -19,15 +18,12 @@ library(scales)
 library(dbplyr)
 library(assert)
 library(ineq)
-library(ggraph)
 library(splitstackshape)
-library(RCurl)
 library(polkadotutils)
 library(data.table)
 library(googleCloudStorageR)
 library(bigrquery)
 library(httr)
-library(data.table)
 library(bit64)
 ```
 
@@ -46,16 +42,21 @@ gcs_auth(token = bq_token())
 # Can be "polkadot" or "kusama"
 chain = "polkadot"
 
-# if we want not every era but every `time_offset` era. Using "1" means we include all eras. Using "2" would mean every second era etc.
-time_offset <- 7*6*36
+# if we want not every session but every `time_offset` session Using "1" means we include all sessions. Using "2" would mean every second session etc. Since 6 sessions is one day, we can basically determine the days with 6*DAYS.
+time_offset <- 6*7
 # The amount of tables that should be downloaded
-number_tables <- 5
+number_tables <- 190
 # The sessions to analyze.
 last_session = 9325
 first_session = last_session - time_offset * number_tables
 
+difference = last_session - first_session 
+#x = c(last_session:(last_session - difference))
+sessions = c(first_session:(first_session + difference))
+# extract every time_offset's value
+sessions <- sessions[seq(1, length(sessions), time_offset)]
+old <- Sys.time() # get start time
 missing_tables <- 0
-
 ```
 
 ```{r, echo=FALSE}
@@ -64,32 +65,6 @@ APY <- 0.18
 number_session_per_era <- 6  # Payout happens every 6 sessions
 payout_periods <- ceiling(time_offset / number_session_per_era)  # How many payout periods are covered by time_offset
 threshold <- 1 + payout_periods * (APY / 365)
-```
-
-```{r, echo=FALSE, message=FALSE}
-#Setting up the denomination KSM and (new) DOT:
-network_identifier = ifelse(chain == "polkadot", "DOT", "KSM")
-
-if(chain=="polkadot"){
-  normalization = 1/10000000000
-  chain_name = "Polkadot"
-} else {
-  normalization = 1/1000000000000
-  chain_name = "Kusama"
-}
-
-# Additional normalization
-normalization_thousands = 1/1000
-normalization_millions = 1/1000000
-normalization_billions = 1/1000000000
-
-difference = last_session - first_session 
-#x = c(last_session:(last_session - difference))
-
-sessions = c(first_session:(first_session + difference))
-# extract every time_offset's value
-sessions <- sessions[seq(1, length(sessions), time_offset)]
-old <- Sys.time() # get start time
 ```
 
 ```{r, echo=FALSE}
@@ -235,6 +210,51 @@ update_data <- function(initial_data, new_data, threshold) {
 ``` 
 
 ```{r}
+# This function takes in the validator data table and extracts information of each validator about their "stakers". The stakers variable is formatted as a separated list of stash_address of the nominator that is allocated to them as a staker and the bonded_amount that this nominator got allocated to that validator. This function makes a new data set for every nominator in that list and their bonded_amount and keeps the info about the validator stash address this entry is coming from.
+extract_stakers_and_bonded <- function(stakers) {
+  # Split the string by semicolons
+  stakers_split <- strsplit(stakers, split = "[;,]")[[1]]
+  
+  # Check if the length of stakers_split is valid (must be an even number)
+  if (length(stakers_split) < 2) {
+    # Return empty data frame if there's not enough data
+    return(data.frame(stash_address = character(0), bonded_amount = numeric(0), stringsAsFactors = FALSE))
+  }
+  
+  # Extract the stash addresses (every first element) and bonded amounts (every second element)
+  stash_addresses <- stakers_split[seq(1, length(stakers_split), 2)]  # Every first element is a stash address
+  bonded_amounts <- as.numeric(stakers_split[seq(2, length(stakers_split), 2)])  # Every second element is a bonded amount
+  
+  # Return a data frame with stash addresses and bonded amounts
+  return(data.frame(stash_address = stash_addresses, bonded_amount = bonded_amounts, stringsAsFactors = FALSE))
+}
+
+# Modified filter_nominators function
+filter_nominators <- function(input_df) {
+
+  # Apply the function to extract stakers and bonded amounts from the stakers column
+  stakers_list <- lapply(input_df$stakers, extract_stakers_and_bonded)
+
+  # Create a data frame of validators and their corresponding nominators with bonded amounts
+  validator_stakers <- bind_rows(
+    Map(function(staker_df, validator_address) {
+      # Only add non-empty staker data frames
+      if (nrow(staker_df) > 0) {
+        staker_df$validator_address <- validator_address
+        return(staker_df)
+      } else {
+        return(NULL)
+      }
+    }, stakers_list, input_df$stash_address)
+  )
+
+  return(validator_stakers)
+}
+```
+
+
+
+```{r}
 calculate_days_since_change <- function(overall_nominators, session_timestamps) {
   # Get the timestamp of the most recent session as the reference
   latest_session <- max(as.numeric(names(session_timestamps)))
@@ -350,6 +370,11 @@ print(new) # print in nice format
 ```
 
 ```{r}
+newest_nominators <- polkadotutils::getStakingDataNew("nominators", "session", last_session, chain, "online", TRUE)
+gc()
+validator_newest <- polkadotutils::getStakingDataNew("validators", "session", last_session, chain, "online", TRUE)
+gc()
+
 overall_nominators <- calculate_days_since_change(overall_nominators, session_timestamps)
 
 # Add an indicator to the full list of all nominators ever present of which are the current nominators.
@@ -418,6 +443,83 @@ for(i in 1:nrow(bonded_changed_per_session_aggregated)){
 bonded_changed_per_session_aggregated$average_nr_changes <- bonded_changed_per_session_aggregated$number_changes / bonded_changed_per_session_aggregated$distance
 # The percentage of changes in the bonds of a nominator. Since we count the first appearance of a nominator as a change in bonds, we subtract it here. And since this is session data, a reasonable time frame to change something would be once per era at maximum. 
 overall_nominators$bonded_changed_percent <- (overall_nominators$nr_amount_changed - 1) / (overall_nominators$session_count/number_session_per_era)
+```
+
+```{r}
+overall_nominators_active <- overall_nominators %>%
+  filter(current_set == 1) %>%
+  mutate(
+    staleness_level = case_when(
+      days_since_target_changed <= 14 ~ 1,   # Level 1: 0-14 days
+      days_since_target_changed >= 15 & days_since_target_changed <= 30 ~ 2,  # Level 2: 15-30 days
+      days_since_target_changed >= 31 & days_since_target_changed <= 90 ~ 3,  # Level 3: 31-90 days
+      days_since_target_changed >= 91 & days_since_target_changed <= 180 ~ 4, # Level 4: 91-180 days
+      days_since_target_changed >= 181 ~ 5,  # Level 5: 181+ days
+      TRUE ~ NA_real_  # Handle cases where days_since_target_changed is NA
+    )
+  )
+
+# We extract the stakers of every validator and span them out into a new data set where each of these stakers have their own row. We keep a column with their validator, bonded amount and their own stash address
+validator_stakers_filtered <- filter_nominators(validator_newest)
+validator_stakers_filtered$bonded_amount <- normalize(validator_stakers_filtered$bonded_amount, "p")
+
+# We now merge the previous data set with the staleness data we obtained before
+validator_nominators_merged <- validator_stakers_filtered %>%
+  left_join(overall_nominators_active[, c("stash_address", "days_since_target_changed", "staleness_level")], 
+            by = "stash_address")
+# Keep only the relevant columns for analysis
+validator_nominators_staleness <- validator_nominators_merged %>%
+  select(validator_address, stash_address, bonded_amount, staleness_level, days_since_target_changed)
+
+
+validator_nominators_extended <- validator_nominators_staleness %>%
+  left_join(validator_newest[, c("stash_address", "total_stake", "commission_percent", "num_voters", "self_stake")], 
+            by = c("validator_address" = "stash_address"))
+
+rm(validator_nominators_staleness, validator_nominators_merged)
+
+options(scipen = 999)
+
+
+validator_nominators_extended <- validator_nominators_extended %>%
+  mutate(nominator_stake = total_stake - self_stake) %>%
+  filter(commission_percent < 100)
+
+# Step 2: Calculate the stake proportion of each nominator relative to the validator's total nominator stake
+validator_nominators_extended <- validator_nominators_extended %>%
+  mutate(stake_proportion = bonded_amount / nominator_stake)
+
+# Step 3: Calculate the weighted days since last target change (weighted by the nominator's stake proportion)
+validator_nominators_extended <- validator_nominators_extended %>%
+  mutate(weighted_days_since_change = round(stake_proportion * days_since_target_changed, 0))
+
+# Step 4: Compute the weighted average of days since last change for each validator
+validator_staleness_summary <- validator_nominators_extended %>%
+  group_by(validator_address) %>%
+  summarise(weighted_avg_days_since_change = sum(weighted_days_since_change, na.rm = TRUE))
+```
+
+```{r}
+ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
+  geom_density(fill = "blue", alpha = 0.4) +
+  labs(title = "Density Plot of Weighted Average Days Since Change", 
+       x = "Weighted Average Days Since Change") +
+  theme_minimal()
+```
+
+```{r}
+# Step 1: Compute the density using the density function
+density_data <- density(validator_staleness_summary$weighted_avg_days_since_change, na.rm = TRUE)
+
+# Step 2: Filter the density data for values greater than 180
+density_above_180 <- density_data$x[density_data$x > 180]  # Get values of x greater than 180
+density_values_above_180 <- density_data$y[density_data$x > 180]  # Corresponding density values
+
+# Step 3: Calculate the area under the curve for values greater than 180
+total_density_above_180 <- sum(density_values_above_180) * (density_data$x[2] - density_data$x[1])  # Trapezoidal integration
+
+# Display the result
+total_density_above_180
 ```
 
 # Introduction
@@ -510,9 +612,6 @@ ggplot(subset(targets_changed_per_session_aggregated, session != first_session),
 # Nomination of inactive validators
 
 ```{r, echo = FALSE}
-newest_nominators <- polkadotutils::getStakingDataNew("nominators", "session", last_session, chain, "online", TRUE)
-newest_validators <- polkadotutils::getStakingDataNew("validators", "session", last_session, chain, "online", TRUE)
-
 # Unnest the targets column for each nominator and create a new data frame that has a row for each entry in "targets".
 nominators_unnested <- subset(newest_nominators, select = c("stash_address", "targets")) %>%
     separate_rows(targets, sep = ",")
