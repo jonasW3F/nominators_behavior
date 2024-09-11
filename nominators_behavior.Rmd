@@ -253,6 +253,32 @@ filter_nominators <- function(input_df) {
 ```
 
 ```{r, echo = FALSE}
+
+remove_1kv_nominators <- function(overall_nominators){
+  # List of excluded stash addresses
+  exclude_values <- c(
+    "13yk62yQYctYsRPXDFvC5WzBtanAsHDasenooLAxKvf5bNkK",
+    "14Ns6kKbCoka3MS4Hn6b7oRw9fFejG8RH5rq5j63cWUfpPDJ",
+    "16GMHo9HZv8CcJy4WLoMaU9qusgzx2wxKDLbXStEBvt5274B",
+    "12RYJb5gG4hfoWPK3owEYtmWoko8G6zwYpvDYTyXFVSfJr8Y",
+    "12WLDL2AXoH3MHr1xj8K4m9rCcRKSWKTUz8A4mX3ah5khJBn",
+    "13SkL2uACPqBzpKBh3d2n5msYNFB2QapA5vEDeKeLjG2LS3Y",
+    "EX9uchmfeSqKTM7cMMg8DkH49XV8i4R7a7rqCn8btpZBHDP",
+    "G1rrUNQSk7CjjEmLSGcpNu72tVtyzbWdUvgmSer9eBitXWf",
+    "HgTtJusFEn2gmMmB5wmJDnMRXKD6dzqCpNR7a99kkQ7BNvX",
+    "JLENz97TFT2kYaQmyCSEnBsK8VhaDZNmYATfsLCHyLF6Gzu"
+  )
+  
+  # Filter out rows where stash_address is in exclude_values
+  overall_nominators <- overall_nominators %>%
+    filter(!(stash_address %in% exclude_values))
+  
+  return(overall_nominators)
+}
+```
+
+
+```{r, echo = FALSE}
 calculate_days_since_change <- function(overall_nominators, session_timestamps) {
   # Get the timestamp of the most recent session as the reference
   latest_session <- max(as.numeric(names(session_timestamps)))
@@ -340,7 +366,7 @@ for (i in 2:length(sessions)) {
   }
   session_timestamps[[as.character(nominators_next$session[1])]] <- nominators_next$timestamp[1] / 1000  # Convert from milliseconds to seconds
 
-  # If we are in the second iteration, initialize the data
+  # We start at i=2 because that is the first time we have a "old" and "new" table that we can compare. In that step, we first build the new data frame with initiate_data(), after that we populate that one with the newest info in update_data().
   if (i == 2) {
     overall_nominators <- initiate_data(nominators_t0, nominators_next, threshold)
   } else {
@@ -374,7 +400,7 @@ print(new)
 ```
 
 ```{r, echo = FALSE}
-# Add information about the last change (both in bonded_amount and targets) based on the "newest" session they did a change relative to the newest session timestamp.
+# Add information about the last change (both in bonded_amount and targets) based on the "newest" session they did a change relative to the newest session timestamp. We use a helper function for that which extracts the last occured change (in terms of its session) from a nominator and then looks up how long that was ago compared to the newest session that we are looking at.
 overall_nominators <- calculate_days_since_change(overall_nominators, session_timestamps)
 
 # Add an indicator to the full list of all nominators ever present of which are the current nominators.
@@ -383,7 +409,7 @@ overall_nominators <- overall_nominators %>%
 ```
 
 ```{r, echo=FALSE}
-# Here we count the number of sessions in the list of changes that we made.
+# Here we count the number of sessions in the list of changes that we made. To do that, we span out the list of when a change happened for every nominator and then count the number of occurrences of every session.
 for(i in 1:nrow(overall_nominators)){
   overall_nominators$nr_amount_changed[i] <- length(overall_nominators$bonded_amount_changed[i][[1]])
 }
@@ -454,54 +480,39 @@ overall_nominators_active <- overall_nominators %>%
 validator_nominators_merged <- validator_stakers_filtered %>%
   left_join(overall_nominators_active[, c("stash_address", "days_since_target_changed")], 
             by = "stash_address")
+
 # Keep only the relevant columns for analysis
 validator_nominators_staleness <- validator_nominators_merged %>%
   select(validator_address, stash_address, bonded_amount, days_since_target_changed)
 
-
+# We merge back the information of validators to the nominators data frame
 validator_nominators_extended <- validator_nominators_staleness %>%
   left_join(validator_newest[, c("stash_address", "total_stake", "commission_percent", "num_voters", "self_stake")], 
             by = c("validator_address" = "stash_address"))
 
 rm(validator_nominators_staleness, validator_nominators_merged)
-
-validator_nominators_extended <- validator_nominators_extended %>%
-  mutate(nominator_stake = total_stake - self_stake) %>%
-  filter(commission_percent < 100)
-
-# Step 2: Calculate the stake proportion of each nominator relative to the validator's total nominator stake
-validator_nominators_extended <- validator_nominators_extended %>%
-  mutate(stake_proportion = bonded_amount / nominator_stake)
-
-# Step 3: Calculate the weighted days since last target change (weighted by the nominator's stake proportion)
-validator_nominators_extended <- validator_nominators_extended %>%
-  mutate(weighted_days_since_change = round(stake_proportion * days_since_target_changed, 0))
-
-# Step 4: Compute the weighted average of days since last change for each validator
-validator_staleness_summary <- validator_nominators_extended %>%
-  group_by(validator_address) %>%
-  summarise(weighted_avg_days_since_change = sum(weighted_days_since_change, na.rm = TRUE))
 ```
 
 ```{r, echo = FALSE}
-# Step 1: Compute the density using the density function
-density_data <- density(validator_staleness_summary$weighted_avg_days_since_change, na.rm = TRUE)
+## ---------------- We want to get an idea about the backing of a validator and how much of it comes from nominators that have different activity profiles. To do so, we weigh the backing with the staleness days of a nominators. For example, if 90% of the backing of a validator comes from a nominator that didn't change his nomination for 1000 days and 10% comes from another one that changed it 0 days ago, we want to keep the information that most of the backing is stale (so we weigh the days.)
 
-# Step 2: Filter the density data for values greater than 180
-density_above_180 <- density_data$x[density_data$x > 180]  # Get values of x greater than 180
-density_values_above_180 <- density_data$y[density_data$x > 180]  # Corresponding density values
+# We want to later have a notion of how much stake comes from nominators, so we need to deduct the self-stake.
+validator_nominators_extended <- validator_nominators_extended %>%
+  mutate(nominator_stake = total_stake - self_stake)
 
-# Step 3: Calculate the area under the curve for values greater than 180
-total_density_above_180 <- sum(density_values_above_180) * (density_data$x[2] - density_data$x[1])  # Trapezoidal integration
+# Calculate the stake proportion of each nominator relative to the validator's total nominator stake
+validator_nominators_extended <- validator_nominators_extended %>%
+  mutate(stake_proportion = bonded_amount / nominator_stake)
 
-# Display the result
-total_density_above_180
+# Calculate the weighted days since last target change (weighted by the nominator's stake proportion). This makes sure that we properly assess the staleness of a nomination.
+validator_nominators_extended <- validator_nominators_extended %>%
+  mutate(weighted_days_since_change = round(stake_proportion * days_since_target_changed, 0))
 
-ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
-  geom_density(fill = "blue", alpha = 0.4) +
-  labs(title = "Density Plot of Weighted Average Days Since Change", 
-       x = "Weighted Average Days Since Change") +
-  theme_minimal()
+# Compute the weighted average of days since last change for each validator
+validator_staleness_summary <- validator_nominators_extended %>%
+  group_by(validator_address) %>%
+  summarise(weighted_avg_days_since_change = sum(weighted_days_since_change, na.rm = TRUE))
+## ----------------
 ```
 
 # Introduction
@@ -510,6 +521,8 @@ This analysis gives insights into the behavior of nominators within the `r chain
 
 The following table illustrates the parameters of the analysis. Note, that there have been some outages in the data collection, but the analysis copes with that and minimizes the impact on the outcome quality.
 <table style="border-collapse:collapse;border-spacing:0" class="tg"><thead><tr><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Parameter</th><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Value</th></tr></thead><tbody><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Chain</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r chain`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">First Session</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r first_session`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Last Session</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r last_session`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Missing Tables</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="color:#905;background-color:#ddd">`r missing_tables`</span></td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Total number of unique nominators</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="color:#905;background-color:#ddd">`r nrow(overall_nominators)`</span></td></tr></tbody></table>
+
+## Nominators
 
 # Changes over time
 In this section, we examine the temporal fluctuations in both the bonded amount and the targets chosen by each nominator. This analysis helps to identify trends and patterns in the behavior of nominators over time.
@@ -520,7 +533,7 @@ The analysis primarily emphasizes the frequency of alterations in the bonded amo
 
 ```{r, echo = FALSE}
 # Create histogram with ggplot2
-ggplot(overall_nominators, aes(x = bonded_changed_percent)) +
+ggplot(remove_1kv_nominators(overall_nominators), aes(x = bonded_changed_percent)) +
   geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
   labs(title = "Histogram of Bonded Amount Changed Percentage",
        x = "Bonded Amount Changed Percentage", y = "Frequency")
@@ -620,3 +633,29 @@ ggplot(merged_aggregated, aes(x = ratio)) +
 ```
 
 In general, there are `r format(sum(merged_aggregated$at_least_one_inactive), scientific = FALSE)` (or `r round(sum(merged_aggregated$at_least_one_inactive) / nrow(merged_aggregated)*100, digits=2)`%) nominators that have at least one inactive validator in their targets.
+
+
+## Validators
+
+In this section, we analyze in greater detail how the backing of Validators is composed.
+
+```{r, echo = FALSE}
+# Step 1: Compute the density using the density function
+density_data <- density(validator_staleness_summary$weighted_avg_days_since_change, na.rm = TRUE)
+
+# Step 2: Filter the density data for values greater than 180
+density_above_180 <- density_data$x[density_data$x > 180]  # Get values of x greater than 180
+density_values_above_180 <- density_data$y[density_data$x > 180]  # Corresponding density values
+
+# Step 3: Calculate the area under the curve for values greater than 180
+total_density_above_180 <- sum(density_values_above_180) * (density_data$x[2] - density_data$x[1])  # Trapezoidal integration
+
+# Display the result
+total_density_above_180
+
+ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
+  geom_density(fill = "blue", alpha = 0.4) +
+  labs(title = "Density Plot of Weighted Average Days Since Change", 
+       x = "Weighted Average Days Since Change") +
+  theme_minimal()
+```
