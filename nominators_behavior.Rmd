@@ -209,7 +209,7 @@ update_data <- function(initial_data, new_data, threshold) {
 }
 ``` 
 
-```{r}
+```{r, echo = FALSE}
 # This function takes in the validator data table and extracts information of each validator about their "stakers". The stakers variable is formatted as a separated list of stash_address of the nominator that is allocated to them as a staker and the bonded_amount that this nominator got allocated to that validator. This function makes a new data set for every nominator in that list and their bonded_amount and keeps the info about the validator stash address this entry is coming from.
 extract_stakers_and_bonded <- function(stakers) {
   # Split the string by semicolons
