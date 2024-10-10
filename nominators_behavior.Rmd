@@ -43,11 +43,13 @@ gcs_auth(token = bq_token())
 chain = "polkadot"
 
 # if we want not every session but every `time_offset` session Using "1" means we include all sessions. Using "2" would mean every second session etc. Since 6 sessions is one day, we can basically determine the days with 6*DAYS.
+#6*7
 time_offset <- 6*7
 # The amount of tables that should be downloaded
-number_tables <- 37*6
+#37*6
+number_tables <- 228
 # The sessions to analyze.
-last_session = 9406
+last_session = 9580
 first_session = last_session - time_offset * number_tables
 
 difference = last_session - first_session 
@@ -393,10 +395,6 @@ for (i in 2:length(sessions)) {
 # Remove some expensive columns that are not needed.
 overall_nominators <- overall_nominators %>%
   select(-targets)
-
-# Print elapsed time of data collection
-new <- Sys.time() - old 
-print(new)
 ```
 
 ```{r, echo = FALSE}
@@ -511,9 +509,20 @@ validator_nominators_extended <- validator_nominators_extended %>%
 # Compute the weighted average of days since last change for each validator
 validator_staleness_summary <- validator_nominators_extended %>%
   group_by(validator_address) %>%
-  summarise(weighted_avg_days_since_change = sum(weighted_days_since_change, na.rm = TRUE))
+  summarise(weighted_avg_days_since_change = sum(weighted_days_since_change, na.rm = TRUE),
+            commission_percent = mean(commission_percent, na.rm = TRUE),
+            num_voters = mean(num_voters, na.rm = TRUE)
+            )
 ## ----------------
 ```
+
+```{r, echo = FALSE}
+# Print elapsed time of data collection
+new <- Sys.time() - old 
+message(paste0("Script compiliation took ", round(new,1), " Minutes"))
+```
+
+
 
 # Introduction
 
@@ -602,8 +611,6 @@ ggplot(subset(targets_changed_per_session_aggregated, session != first_session),
   theme(panel.grid.minor = element_blank())
 ```
 
-
-
 # Nomination of inactive validators
 
 ```{r, echo = FALSE}
@@ -658,4 +665,21 @@ ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
   labs(title = "Density Plot of Weighted Average Days Since Change", 
        x = "Weighted Average Days Since Change") +
   theme_minimal()
+```
+
+```{r, echo = FALSE}
+hist(validator_staleness_summary$weighted_avg_days_since_change)
+```
+
+```{r, echo = FALSE}
+# TODO: Merge the validator addresses with the names, sort by staleness and give the names
+merged_data <- validator_staleness_summary %>%
+  rename(stash_address = validator_address) %>%
+  left_join(validator_newest %>% select(stash_address, name), by = "stash_address")
+
+tmp <- merged_data %>%
+  arrange(desc(weighted_avg_days_since_change))
+tmp$name <- ifelse(tmp$name == "", "pseudo-a", tmp$name)
+head(tmp %>%
+       select(name, weighted_avg_days_since_change))
 ```
