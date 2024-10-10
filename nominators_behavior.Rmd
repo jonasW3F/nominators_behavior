@@ -23,8 +23,7 @@ library(polkadotutils)
 library(data.table)
 library(googleCloudStorageR)
 library(bigrquery)
-library(httr)
-library(bit64)
+library(knitr)
 ```
 
 
@@ -49,7 +48,7 @@ time_offset <- 6*7
 #37*6
 number_tables <- 228
 # The sessions to analyze.
-last_session = 9580
+last_session = 9580 # 9442 for one of last sessions with 297 vals
 first_session = last_session - time_offset * number_tables
 
 difference = last_session - first_session 
@@ -522,97 +521,6 @@ new <- Sys.time() - old
 message(paste0("Script compiliation took ", round(new,1), " Minutes"))
 ```
 
-
-
-# Introduction
-
-This analysis gives insights into the behavior of nominators within the `r chain` network. Nominators are tracked across consecutive sessions using their unique stash address. The main motivation for this analysis is to get an understanding about how often nominators are updating their targets, i.e., make a new selection of validators, and understand how much backing of validators comes from these different types of nominators. The main outcome for the analysis is the days that have passed since a nominator last updated their targets.
-
-The following table illustrates the parameters of the analysis. Note, that there have been some outages in the data collection, but the analysis copes with that and minimizes the impact on the outcome quality.
-<table style="border-collapse:collapse;border-spacing:0" class="tg"><thead><tr><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Parameter</th><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Value</th></tr></thead><tbody><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Chain</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r chain`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">First Session</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r first_session`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Last Session</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r last_session`</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Missing Tables</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="color:#905;background-color:#ddd">`r missing_tables`</span></td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Total number of unique nominators</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="color:#905;background-color:#ddd">`r nrow(overall_nominators)`</span></td></tr></tbody></table>
-
-## Nominators
-
-# Changes over time
-In this section, we examine the temporal fluctuations in both the bonded amount and the targets chosen by each nominator. This analysis helps to identify trends and patterns in the behavior of nominators over time.
-
-### Bonded Amount: Histogram of changes
-
-The analysis primarily emphasizes the frequency of alterations in the bonded amount. It is essential to note that changes only take effect following a new election, which occurs every `r number_session_per_era` sessions. To account for this, it is more meaningful to normalize the frequency on a "per era" basis rather than per session. In this context, if a nominator modifies their bonded amount once throughout `r number_session_per_era` sessions, the frequency in the histogram is represented as 1. Conversely, if a nominator adjusts their bonded_amount every session, the frequency is denoted as 6.
-
-```{r, echo = FALSE}
-# Create histogram with ggplot2
-ggplot(remove_1kv_nominators(overall_nominators), aes(x = bonded_changed_percent)) +
-  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
-  labs(title = "Histogram of Bonded Amount Changed Percentage",
-       x = "Bonded Amount Changed Percentage", y = "Frequency")
-```
-
-There are a few outlier nominators who adjust their bonded amount with remarkable frequency. For the purpose of this analysis, we will concentrate on those with a frequency lying between 0 and 1, ensuring a more representative understanding of typical nominator behavior.
-
-```{r, echo = FALSE}
-# Create histogram with ggplot2
-ggplot(subset(overall_nominators, bonded_changed_percent <= 1), aes(x = bonded_changed_percent)) +
-  geom_histogram(binwidth = 0.1, color = "black", fill = "lightblue") +
-  labs(title = "Histogram of Bonded Amount Changed Percentage",
-       x = "Bonded Amount Changed Percentage", y = "Frequency")
-```
-
-### Bonded amount: Changes over sessions
-
-The subsequent graph illustrates the variations in bonded amount across sessions. The frequency displayed is in absolute terms, representing the total number of nominators who altered their bonded_amount within each individual session. This visualization helps to convey the overall trends and patterns in nominators' behavior over time.
-
-```{r, echo = FALSE}
-ggplot(subset(bonded_changed_per_session_aggregated, session != first_session), aes(x = session, y = average_nr_changes)) +
-  geom_line() +
-  geom_point(size = 0.5) +
-  theme_minimal() +
-  labs(title = "Number of Changes Over Time (Bonded Amount Change)",
-       x = "Session",
-       y = "Number of Changes") +
-  theme(panel.grid.minor = element_blank())
-```
-
-We can observe a high number of changes in the bonded amount. However, this is primarily due to many nominators employing automatic re-bonding of staking rewards. Distinguishing manual changes in the bonded amount from automatic ones is challenging. An approximation could be made based on the stash address size and the expected staking rewards per session, but this is left unexplored for now.
-
-## Targets
-This analysis forms the most crucial aspect of nominator behavior as it directly sheds light on their validator preferences and the frequency with which they update their nominations. The following histogram displays individual changes in targets across nominators over the entire time frame. The data is normalized by the number of sessions a nominator has been active and is presented on a per-era basis. In other words, a value of 1 signifies that a nominator altered their targets once every six sessions they were active. It is important to note that, in contrast to the `bonded_amount`, changes in targets are always manually initiated by nominators, reflecting conscious decision-making.
-
-### Targets: Histogram of changes
-
-```{r, echo = FALSE}
-# Create histogram with ggplot2
-ggplot(overall_nominators, aes(x = targets_changed_percent)) +
-  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
-  labs(title = "Histogram of Targets Changed Percentage",
-       x = "Targets Changed Percentage", y = "Frequency")
-```
-
-Once more, we encounter some outlier nominators who alter their targets with exceptional frequency, which hampers the graph's readability. To address this, the following graph narrows its focus to nominators who modify their targets between 0 and 100% of the time, specifically every six sessions. This refined visualization aids in better understanding the typical behavior of nominators in relation to their target changes.
-
-```{r, echo = FALSE}
-# Create histogram with ggplot2
-ggplot(subset(overall_nominators, targets_changed_percent <= 1), aes(x = targets_changed_percent)) +
-  geom_histogram(binwidth = 0.1, color = "black", fill = "lightblue") +
-  labs(title = "Histogram of Targets Changed Percentage",
-       x = "Targets Changed Percentage", y = "Frequency")
-```
-
-The following graph plots the frequency of target changes of nominators per session.
-
-```{r, echo = FALSE}
-ggplot(subset(targets_changed_per_session_aggregated, session != first_session), aes(x = session, y = average_nr_changes)) +
-  geom_line() +
-  geom_point(size = 0.5) +
-  theme_minimal() +
-  labs(title = "Number of Changes Over Time (Targets Change)",
-       x = "Session",
-       y = "Number of Changes") +
-  theme(panel.grid.minor = element_blank())
-```
-
-# Nomination of inactive validators
-
 ```{r, echo = FALSE}
 # Unnest the targets column for each nominator and create a new data frame that has a row for each entry in "targets".
 nominators_unnested <- subset(nominators_newest, select = c("stash_address", "targets")) %>%
@@ -627,39 +535,66 @@ merged_aggregated <- aggregate(cbind(active, counter) ~ nominator_stash, data = 
 
 merged_aggregated$ratio <- merged_aggregated$active / merged_aggregated$counter
 merged_aggregated$at_least_one_inactive <- ifelse(merged_aggregated$ratio < 1, 1,0)
-  
 ```
 
-The subsequent histogram presents the ratio of active to inactive validators within the nominators' targets. Unlike previous analyses, this examination focuses on the current state of the network during the most recent session (`r last_session`). In this context, a ratio of 1 indicates that all validators a nominator is voting for are presently active. This insight offers an understanding of the overall alignment of nominator preferences with the active validator pool.
+# Introduction
 
-```{r, echo=FALSE}
-ggplot(merged_aggregated, aes(x = ratio)) +
-  geom_histogram(binwidth = 0.1, color = "black", fill = "lightblue") +
-  labs(title = "Histogram of ratio of nominations of active validators",
-       x = "Ratio of nominations of active validators", y = "Frequency")
-```
+This analysis gives insights into the behavior of nominators within the `r chain` network. Nominators are tracked across consecutive sessions using their unique stash address. The main motivation for this analysis is to get an understanding about how often nominators are updating their targets, i.e., make a new selection of validators, and understand how much backing of validators comes from these different types of nominators. The main outcome for the analysis is the days that have passed since a nominator last updated their targets.
 
-In general, there are `r format(sum(merged_aggregated$at_least_one_inactive), scientific = FALSE)` (or `r round(sum(merged_aggregated$at_least_one_inactive) / nrow(merged_aggregated)*100, digits=2)`%) nominators that have at least one inactive validator in their targets.
+# Nominators
 
+The following table illustrates the parameters of the analysis. Note, that there have been some outages in the data collection, but the analysis copes with that and minimizes the impact on the outcome quality.
 
-## Validators
+<table style="border-collapse:collapse;border-spacing:0" class="tg"><thead><tr><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:bold;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Metric</th><th style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;font-weight:normal;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"></th></tr></thead>
+<tbody><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">First Session Number (Date)</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r first_session` (`r as.Date(as.POSIXct(session_timestamps[[as.character(first_session)]], origin = "1970-01-01", tz = "UTC"))`)</td></tr>
+<tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Last Session Number (Date)</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="font-weight:400;font-style:normal">`r last_session` (</span><br>`r as.Date(as.POSIXct(session_timestamps[[as.character(last_session)]], origin = "1970-01-01", tz = "UTC"))`)</td></tr>
+<tr><td style="border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Maximum Inaccuracy</td><td style="border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(time_offset / 6, digit = 0)` days</td></tr><tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Total unique Nominators</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r nrow(overall_nominators)`</td></tr>
+<tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Currently active Nominators</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r nrow(overall_nominators_active)`</td></tr>
+<tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average number of bonded amount changes (all nominators)</td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(overall_nominators$nr_amount_changed), digit = 1)`</td></tr>
+<tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="font-weight:400;font-style:normal">Average days since last bonded amount change (currently active nominators)</span></td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(overall_nominators_active$days_since_bonded_amount_changed), digit = 0)` days</td></tr>
+<tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="font-weight:400;font-style:normal">Average number of target changes (all nominators)</span></td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(overall_nominators$nr_targets_changed), digit = 1)`</td></tr>
+<tr><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="font-weight:400;font-style:normal">Average days since last target change (currently active nominators)</span></td><td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal"><span style="font-weight:400;font-style:normal">`r round(mean(overall_nominators_active$days_since_target_changed), digit = 0)` days</span></td></tr>
+<tr><td style="border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Share of Nominators with at least one inactive validator nominated (currently active nominators)</td><td style="border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(merged_aggregated$at_least_one_inactive), digit = 2)*100`%</td></tr></tbody></table>
 
-In this section, we analyze in greater detail how the backing of Validators is composed.
+## Distribution of Target and Bonded Amount Changes
+The following two graphs give a better perspective about the distribution of the two variables.
+
+### Number of Bonded Amount Changes
+Active filters: only active nominators, no 1kv nominators.
 
 ```{r, echo = FALSE}
-# Step 1: Compute the density using the density function
-density_data <- density(validator_staleness_summary$weighted_avg_days_since_change, na.rm = TRUE)
+ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_amount_changed)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
+  labs(title = "Histogram of Bonded Amount Changed",
+       x = "Bonded Amount Changed Percentage", y = "Frequency")
 
-# Step 2: Filter the density data for values greater than 180
-density_above_180 <- density_data$x[density_data$x > 180]  # Get values of x greater than 180
-density_values_above_180 <- density_data$y[density_data$x > 180]  # Corresponding density values
+```
 
-# Step 3: Calculate the area under the curve for values greater than 180
-total_density_above_180 <- sum(density_values_above_180) * (density_data$x[2] - density_data$x[1])  # Trapezoidal integration
 
-# Display the result
-total_density_above_180
+### Target Changes
+Active filters: only active nominators, no 1kv nominators.
 
+```{r, echo = FALSE}
+ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_targets_changed)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
+  labs(title = "Histogram of Target Change",
+       x = "Target Changed Changed", y = "Frequency")
+
+```
+
+# Validators
+
+In this section, we analyze in greater detail how the backing of Validators is composed. The key metric we are focusing on here is the weighted average days since a change occurred in nominations (targets) by the nominators. This is what we call *Weighted Backing Age* and it gives an idea of how much of the backing of a Validator is from very early nominations. 
+
+This metric is expressed on a per-validator basis. To calculate it, we analyze all nominators of each Validator with respect to the time they last changed their nomination and how much backing they provide for the Validator. Instead of taking simply the average of the days since a change of targets occurred of their nominations, we additional weigh them by the backing they provide. 
+
+Consider the following example: Let's assume a Validator has only two nominators A and B. Nominator A is backing the Validator and has not updated their targets since 50 days and has a bonded amount of 5000 DOT. Nominator B is backing the Validator since 1000 days and has a bonded amount of 20000 DOT. Instead of the average backing being 50+1000 / 2 = 525 days, we incorporate the fact that one nominator contributes much more to the backing than the other. Mathematically, we would be calculating: 5000 / (20000+5000) * 50 + 20000 / (20000+5000) * 1000 = 810. 
+
+This metric gives a better understanding of the **Weighted Backing Age** of each Validator.
+
+The following graph plots the density of this metric for all Validators in the active set.
+
+```{r, echo = FALSE}
 ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
   geom_density(fill = "blue", alpha = 0.4) +
   labs(title = "Density Plot of Weighted Average Days Since Change", 
@@ -668,11 +603,27 @@ ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
 ```
 
 ```{r, echo = FALSE}
-hist(validator_staleness_summary$weighted_avg_days_since_change)
+
+density_model <- density(validator_staleness_summary$weighted_avg_days_since_change)
+density_function <- approxfun(density_model$x, density_model$y)
+threshold <- 180
+result <- integrate(density_function, lower = threshold, upper =  max(validator_staleness_summary$weighted_avg_days_since_change))
 ```
 
+Given the data above, we can say, for example, that `r result$value` of the density is above `r threshold` days (or 6 months).
+
+The following histogram provides additional information about the distribution of the staleness metric on a per-validator basis of all active validators (n = `r nrow(validator_staleness_summary)`.
+
 ```{r, echo = FALSE}
-# TODO: Merge the validator addresses with the names, sort by staleness and give the names
+ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
+  labs(title = "Histogram of Weighted Backing Age",
+       x = "Weighted Backing Age", y = "Frequency")
+```
+
+The following table sorts each validator based on their weighted backing age and provides the name and stash address. Validators without a set identity are labelled "pseudo-a".
+
+```{r, echo = FALSE}
 merged_data <- validator_staleness_summary %>%
   rename(stash_address = validator_address) %>%
   left_join(validator_newest %>% select(stash_address, name), by = "stash_address")
@@ -680,6 +631,15 @@ merged_data <- validator_staleness_summary %>%
 tmp <- merged_data %>%
   arrange(desc(weighted_avg_days_since_change))
 tmp$name <- ifelse(tmp$name == "", "pseudo-a", tmp$name)
-head(tmp %>%
-       select(name, weighted_avg_days_since_change))
+
+
+tmp %>%
+  select(stash_address, name, weighted_avg_days_since_change) %>%
+  rename(
+    "Stash Address" = stash_address,
+    "Validator Name" = name,
+    "Weighted Backing Age" = weighted_avg_days_since_change
+  ) %>%
+  head(30) %>%
+  kable(caption = "Summary of Weighted Backing Age")
 ```
