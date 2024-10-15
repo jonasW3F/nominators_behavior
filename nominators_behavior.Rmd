@@ -1,7 +1,7 @@
 ---
-title: "State of Nominator Activity and Validator Backing on Polkadot"
+title: "Nominator Activity and Validator Backing on Polkadot"
 author: "Jonas Gehrlein @ Web3 Foundation"
-date: 11/10/2024
+date: 15/10/2024
 output: html_document
 version: "1.0"
 ---
@@ -46,7 +46,7 @@ chain = "polkadot"
 time_offset <- 6*7
 # The amount of tables that should be downloaded
 #37*6
-number_tables <- 228#228
+number_tables <- 5
 # The sessions to analyze.
 last_session = 9580 # 9442 for one of last sessions with 297 vals
 first_session = last_session - time_offset * number_tables
@@ -326,7 +326,7 @@ calculate_days_since_change <- function(overall_nominators, session_timestamps) 
 }
 ```
 
-```{r, echo=FALSE, message = FALSE}
+```{r, echo=FALSE, message = FALSE, warning = FALSE, results = 'hide'}
 # Getting the first nominators data set to start the process
 nominators_t0 <- getStakingDataNew("nominators", "session", sessions[1], chain, "online", TRUE)
 
@@ -402,7 +402,7 @@ overall_nominators <- overall_nominators %>%
   mutate(current_set = if_else(stash_address %in% nominators_newest$stash_address, 1, 0))
 ```
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, message = FALSE}
 # Here we count the number of sessions in the list of changes that we made. To do that, we span out the list of when a change happened for every nominator and then count the number of occurrences of every session.
 for(i in 1:nrow(overall_nominators)){
   overall_nominators$nr_amount_changed[i] <- length(overall_nominators$bonded_amount_changed[i][[1]])
@@ -414,7 +414,7 @@ for(i in 1:nrow(overall_nominators)){
 overall_nominators$total_changes <- overall_nominators$nr_amount_changed + overall_nominators$nr_targets_changed
 ```
 
-```{r echo = FALSE}
+```{r echo = FALSE, message = FALSE}
 # Here we calculate how often a change occured per session.
 
 ## Analysis Targets Change
@@ -460,7 +460,7 @@ overall_nominators$bonded_changed_percent <- (overall_nominators$nr_amount_chang
 ```
 
 
-```{r, echo = FALSE}
+```{r, echo = FALSE, message = FALSE}
 # Here, we calculate take the information about the staleness of the nominators and cross-reference it with their validators to understand how much backing of a validator is composed of different levels of staleness of nominations.
 
 # We extract the stakers of every validator and span them out into a new data set where each of these stakers have their own row. We keep a column with their validator, bonded amount and their own stash address
@@ -514,11 +514,11 @@ validator_staleness_summary <- validator_nominators_extended %>%
 
 ```{r, echo = FALSE}
 # Print elapsed time of data collection
-new <- Sys.time() - old 
-message(paste0("Script compiliation took ", round(new,1), " Minutes"))
+time_diff <- difftime(Sys.time(), old, units = "auto")
+message(paste0("Data collection and analysis took ", round(as.numeric(time_diff), 1), " ", attr(time_diff, "units")))
 ```
 
-```{r, echo = FALSE}
+```{r, echo = FALSE, message = FALSE}
 # Unnest the targets column for each nominator and create a new data frame that has a row for each entry in "targets".
 nominators_unnested <- subset(nominators_newest, select = c("stash_address", "targets")) %>%
     separate_rows(targets, sep = ",")
@@ -542,18 +542,18 @@ The purpose of this analysis is to support the RFC (TODO LINK), which proposes m
 
 **An important note**: There are no indications that the current set of Validators is insufficient or sub-optimal. Rather, the RFC is aiming to make the situation better before problem occur, increasing the confidence in the current Validator set even further. The results, especially on Validators are not meant to discredit any individual party. The data is purely descriptive. Also, it does not mean Validators with very old Backing Age are in any form suboptimal. The goal is simply to nudge Nominators to engage more frequently with their targets, even if that would lead to the same Validator set as is, we as a community could be even more confident that we have the best Validator set in the blockchain space.
 
-## The Data
+### The Data
 
 The data used in this analysis consists of session-based snapshots of Validators and Nominators. The Nominator dataset includes information on their stash addresses, bonded amounts, and chosen targets (i.e., Validators they nominate). The Validator dataset includes details on their stash addresses, identities (if set), self-stake, total stake, commission, and their stakers (i.e., Nominators allocated to back the Validator by the NPoS algorithm).
 
 Each Era on Polkadot comprises six sessions, and the effects of changes (such as bonding adjustments or target updates by Nominators) take effect at the beginning of the next Era. However, these changes can occur during any session. To reduce computation, this analysis takes every n-th session. The current configuration samples every `r time_offset` sessions, which corresponds to a snapshot approximately every `r round(time_offset / 6, digit = 0)` day. This approach introduces "blind spots," which may result in slight inaccuracies (represented as "Maximum Inaccuracy" in the table below).
 
-## Special Thanks
-We would like to express our gratitude to the Parity Data team for their continuous efforts in maintaining the data sources that make analyses like this possible. In particular, a special thanks goes to Pranay for providing clean and well-structured datasets, which have been invaluable for this work.
+### Special Thanks
+I would like to express our gratitude to the Parity Data team for their continuous efforts in maintaining the data sources that make analyses like this possible. In particular, a special thanks goes to Pranay for providing clean and well-structured datasets, which have been invaluable for this work.
 
 # Analysis
 
-## Overview
+### Overview
 
 <table style="border-collapse:collapse;border-spacing:0" class="tg">
   <thead>
@@ -579,7 +579,7 @@ We would like to express our gratitude to the Parity Data team for their continu
 </table>
 
 
-## Nominators
+### Nominators
 
 The following table provides a summary of the Nominators.
 
@@ -600,32 +600,32 @@ The following table provides a summary of the Nominators.
       <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r nrow(overall_nominators_active)`</td>
     </tr>
     <tr>
-      <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average number of bonded amount changes (all nominators)</td>
+      <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average number of bonded amount changes (all Nominators)</td>
       <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(overall_nominators$nr_amount_changed), digit = 1)`</td>
     </tr>
     <tr>
-      <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average days since last bonded amount change (currently active nominators)</td>
+      <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average days since last bonded amount change (currently active Nominators)</td>
       <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(overall_nominators_active$days_since_bonded_amount_changed), digit = 0)` days</td>
     </tr>
     <tr>
-      <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average number of target changes (all nominators)</td>
+      <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average number of target changes (all Nominators)</td>
       <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(overall_nominators$nr_targets_changed), digit = 1)`</td>
     </tr>
     <tr>
-      <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average days since last target change (currently active nominators)</td>
+      <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Average days since last target change (currently active Nominators)</td>
       <td style="border-color:inherit;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(overall_nominators_active$days_since_target_changed), digit = 0)` days</td>
     </tr>
     <tr>
-      <td style="border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Share of Nominators with at least one inactive validator nominated (currently active nominators)</td>
+      <td style="border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">Share of Nominators with at least one inactive Validator nominated (currently active Nominators)</td>
       <td style="border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;overflow:hidden;padding:10px 5px;text-align:left;vertical-align:top;word-break:normal">`r round(mean(merged_aggregated$at_least_one_inactive), digit = 2)*100`%</td>
     </tr>
   </tbody>
 </table>
 
-### Changes in Bond
-Active filters: only active nominators, no 1kv nominators.
+#### Changes in Bond
+Active filters: only active Nominators, no 1kv Nominators.
 
-In the data, the bonded amount of a nominator increases either if it was a concious choice by the nominator (either bonding extra or withdrawing bond) or if the reward destination was set to compounding. Only tracking changes in the bonded amount would therefore inflate the number by the fact that many nominators use the compounding feature. To tackle this issue, we define a manual increase in the bonded amount if it exceeded a (extrapolated) `r APY*100`% APR. In other words, we assume that the increase was due to a payout of staking rewards if it is the size of a usual staking reward relative to the bond size. Sampling different nominators manually shows that this approximation is working well.
+In the data, the bonded amount of a Nominator increases either if it was a concious choice by the Nominator (either bonding extra or withdrawing bond) or if the reward destination was set to compounding. Only tracking changes in the bonded amount would therefore inflate the number by the fact that many Nominators use the compounding feature. To tackle this issue, we can define a manual increase in the bonded amount if it exceeded a (extrapolated) `r APY*100`% APR. In other words, we assume that the increase was due to a payout of staking rewards if it is the size of a usual staking reward relative to the bond size. Sampling different Nominators manually shows that this approximation is working well.
 
 ```{r, echo = FALSE}
 ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_amount_changed)) +
@@ -634,9 +634,8 @@ ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_amount_chang
        x = "Bonded Amount Changed Percentage", y = "Frequency")
 ```
 
-
-### Changes in Targets
-Active filters: only active nominators, no 1kv nominators.
+#### Changes in Targets
+Active filters: only active Nominators, no 1kv Nominators.
 
 ```{r, echo = FALSE}
 ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_targets_changed)) +
@@ -645,13 +644,22 @@ ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_targets_chan
        x = "Target Changed Changed", y = "Frequency")
 ```
 
-The two graphs above indicate that most nominators, after their initialization, never actively engage with their target selection nor the bonded amount again.
+Excluding the numerous nominators that only ever did their first nomination, the following picture arises:
 
-## Validators
+```{r, echo = FALSE}
+ggplot(remove_1kv_nominators(overall_nominators_active %>% filter(nr_targets_changed > 1)), aes(x = nr_targets_changed)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
+  labs(title = "Histogram of Target Change",
+       x = "Target Changed Changed", y = "Frequency")
+```
+
+To summarize the data, we can clearly say that nominators rarely engage with their nomination after their initial action to become a nominator. On average, nominators changed their bonded amount only `r round((mean(remove_1kv_nominators(overall_nominators_active)$nr_amount_changed)-1), digits = 2)` times and `r round((mean(remove_1kv_nominators(overall_nominators_active)$nr_targets_changed)-1), digits =2)` times after the first time. While there are some much more active nominators, this is a strong indication that a large share of nominators simply set and forget. Additional to the fact that many nominations are very old (), there is room for improvement and the data supports initiatives suggested as in RFC XX (TODO).
+
+### Validators
 
 In this section, we delve deeper into the composition of Validator backing. Our focus is on the number of days since the active Nominators of each Validator last changed their targets. Additionally, we adjust these days by the relative size of each Nominator's bond in relation to the total bonded amount of the Validator. This metric, referred to as **Weighted Backing Age** (WBA), provides insight into how much of a Validator's backing comes from earlier or newer nominations.
 
-Consider the following example: Suppose a Validator has two nominators, A and B. Nominator A has not updated their targets in 50 days and has a bonded amount of 5000 DOT. Nominator B, on the other hand, has not updated their targets in 1000 days and has a bonded amount of 20,000 DOT. Instead of simply averaging the backing age as (50 + 1000) / 2 = 525 days, we account for the fact that one nominator contributes significantly more to the backing. Mathematically, this is calculated as: 5000 / (20000+5000) * 50 + 20000 / (20000+5000) * 1000 = 810. In this example, the WBA is larger than the simple average, because the Nominator contributing most to the backing is from longer ago. This, of course, also works the other way around.
+Consider the following example: Suppose a Validator has two Nominators, A and B. Nominator A has not updated their targets in 50 days and has a bonded amount of 5000 DOT. Nominator B, on the other hand, has not updated their targets in 1000 days and has a bonded amount of 20,000 DOT. Instead of simply averaging the backing age as (50 + 1000) / 2 = 525 days, we account for the fact that one Nominator contributes significantly more to the backing. Mathematically, this is calculated as: 5000 / (20000+5000) * 50 + 20000 / (20000+5000) * 1000 = 810. In this example, the WBA is larger than the simple average, because the Nominator contributing most to the backing is from longer ago. This, of course, also works the other way around.
 
 The following graph plots the density of the WBA for all Validators in the active set.
 
@@ -670,9 +678,9 @@ threshold <- ifelse(max(validator_staleness_summary$weighted_avg_days_since_chan
 result <- integrate(density_function, lower = threshold, upper =  max(validator_staleness_summary$weighted_avg_days_since_change))
 ```
 
-Given the data above, we can say, for example, that `r round(result$value,digit = 1)*100`% of the density is above `r threshold` days (or around `r round(threshold/30, digits = 1)` months). In other words, `r round(result$value,digit = 1)*100`% of the total backing of all validators is older than `r round(threshold/30.5, digits = 1)` months.
+Given the data above, we can say, for example, that `r round(result$value,digit = 1)*100`% of the density is above `r threshold` days (or around `r round(threshold/30, digits = 1)` months). In other words, `r round(result$value,digit = 1)*100`% of the total backing of all Validators is older than `r round(threshold/30, digits = 1)` months.
 
-The following histogram provides additional information about the distribution of the staleness metric on a per-validator basis of all active validators (n = `r nrow(validator_staleness_summary)`).
+The following histogram provides additional information about the distribution of the staleness metric on a per-Validator basis of all active Validators (n = `r nrow(validator_staleness_summary)`).
 
 ```{r, echo = FALSE}
 ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
@@ -681,7 +689,7 @@ ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
        x = "Weighted Backing Age (WBA)", y = "Frequency")
 ```
 
-The following table sorts each validator based on their weighted backing age and provides the name and stash address. Validators without a set identity are labelled "pseudo-a".
+The following table sorts each Validator based on their weighted backing age and provides the name and stash address. Validators without a set identity are labelled "pseudo-a".
 
 ```{r, echo = FALSE}
 merged_data <- validator_staleness_summary %>%
@@ -706,8 +714,10 @@ tmp %>%
 
 **Note:** As mentioned above, the table above is purely descriptive and it does not necessarily mean that a large WBA is a bad thing. Validators that have a large WBA, by definition, also are long-time contributors to the Polkadot Network.
 
-The average WBA of all active validators is `r round(mean(validator_staleness_summary$weighted_avg_days_since_change), digits = 0)` (and `r round(mean(subset(validator_staleness_summary, commission_percent < 100)$weighted_avg_days_since_change), digits = 0)` for Validators without 100% commission).
+The average WBA of all active Validators is `r round(mean(validator_staleness_summary$weighted_avg_days_since_change), digits = 0)` (and `r round(mean(subset(validator_staleness_summary, commission_percent < 100)$weighted_avg_days_since_change), digits = 0)` for Validators without 100% commission).
 
 # Conclusion
 
-The analysis presented here has shown that many Nominators simply set their targets and never really engage with their nominations (at least expressed as an on-chain change) again. This leads to the predictable result that the average **Weighted Backing Age** of Validators is rather large with `r round(mean(validator_staleness_summary$weighted_avg_days_since_change), digits = 0)`. This does not necessarily mean that the current set of Validators is not optimal. But finding ways to gain more confidence that Nominators are up to date with the recent developments in the Validator set is desirable. RFC (TODO) proposes some mechanism to achieve this, while not making it too difficult for Nominators.
+The analysis presented here has shown that many if not most Nominators  never really engage with their nominations (at least through on-chain activity) again. On average, nominators only change their Validator selection `r round((mean(remove_1kv_nominators(overall_nominators_active)$nr_targets_changed)-1), digits = 2)` times and the average time since the last change is `r round(mean(overall_nominators_active$days_since_bonded_amount_changed), digit = 0)` days. This directly translates into the average **Weighted Backing Age** of Validators which amounts to `r round(mean(validator_staleness_summary$weighted_avg_days_since_change), digits = 0)`. In other words, not only do most nominators not frequently update or change their selection of validators, they also hold a significant share of the total stake in the system.  
+
+This does not necessarily mean that the current set of Validators is not optimal or robust. But finding ways to gain more confidence that Nominators are up to date with the recent developments in the Validator set is desirable. Therefore, this data analysis strongly supports the initiative proposed by RFC XX(TODO) that creates incentives for nominators to revisit their selection and has Polkadot achieve an even better set of Validators.
