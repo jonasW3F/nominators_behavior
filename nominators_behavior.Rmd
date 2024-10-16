@@ -125,7 +125,8 @@ initiate_data <- function(df_t0, df_t1, threshold) {
     targets_changed = I(merged_df$targets_changed),
     bonded_amount_changed = I(merged_df$bonded_amount_changed),
     session_count = merged_df$session_count,
-    session = merged_df$session_t1
+    session = merged_df$session_t1,
+    is_pool = merged_df$is_nomination_pool_t1
   )
 
   return(final_df)
@@ -203,7 +204,8 @@ update_data <- function(initial_data, new_data, threshold) {
     bonded_amount_changed = I(merged_df$bonded_amount_changed),
     session_count = merged_df$session_count,
     session = merged_df$session_new,
-    stringsAsFactors = FALSE
+    stringsAsFactors = FALSE,
+    is_pool = merged_df$is_nomination_pool
   )
 
   return(final_df)
@@ -635,7 +637,7 @@ ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_amount_chang
 ```
 
 #### Changes in Targets
-Active filters: only active Nominators, no 1kv Nominators.
+(Active filters: only active Nominators, no 1kv Nominators)
 
 ```{r, echo = FALSE}
 ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_targets_changed)) +
@@ -646,6 +648,8 @@ ggplot(remove_1kv_nominators(overall_nominators_active), aes(x = nr_targets_chan
 
 Excluding the numerous nominators that only ever did their first nomination, the following picture arises:
 
+(Active Filters: only active Nominators, no 1kv Nominators, target changes > 1)
+
 ```{r, echo = FALSE}
 ggplot(remove_1kv_nominators(overall_nominators_active %>% filter(nr_targets_changed > 1)), aes(x = nr_targets_changed)) +
   geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
@@ -653,7 +657,19 @@ ggplot(remove_1kv_nominators(overall_nominators_active %>% filter(nr_targets_cha
        x = "Target Changed Changed", y = "Frequency")
 ```
 
-To summarize the data, we can clearly say that nominators rarely engage with their nomination after their initial action to become a nominator. On average, nominators changed their bonded amount only `r round((mean(remove_1kv_nominators(overall_nominators_active)$nr_amount_changed)-1), digits = 2)` times and `r round((mean(remove_1kv_nominators(overall_nominators_active)$nr_targets_changed)-1), digits =2)` times after the first time. While there are some much more active nominators, this is a strong indication that a large share of nominators simply set and forget. Additional to the fact that many nominations are very old (), there is room for improvement and the data supports initiatives suggested as in RFC XX (TODO).
+As an interesting additional analysis, we can look only at nomination pools and see how they behave.
+
+(Active filters: only active Nominators, no 1kv Nominators, is_pool = TRUE)
+
+```{r, echo = FALSE}
+ggplot(remove_1kv_nominators(overall_nominators_active %>% filter(is_pool == TRUE)), aes(x = nr_targets_changed)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "lightblue") +
+  labs(title = "Histogram of Target Change",
+       x = "Target Changed Changed", y = "Frequency")
+```
+
+
+To summarize the data, we can clearly say that nominators rarely engage with their nomination after their initial action to become a nominator. On average and after their initial choice to become a nominator, they change their bonded amount only `r round((mean(remove_1kv_nominators(overall_nominators_active)$nr_amount_changed)-1), digits = 2)` times and their targets only `r round((mean(remove_1kv_nominators(overall_nominators_active)$nr_targets_changed)-1), digits =2)` times (`r round((mean(remove_1kv_nominators(overall_nominators_active %>% filter(is_pool == FALSE))$nr_targets_changed)-1), digits =2)` if we exclude pools and `r round((mean(remove_1kv_nominators(overall_nominators_active %>% filter(is_pool == TRUE))$nr_targets_changed)-1), digits =2)` if we only look at pools). While there are some much more active nominators, this is a strong indication that a large share of nominators simply set and forget.
 
 ### Validators
 
