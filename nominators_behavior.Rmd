@@ -689,7 +689,11 @@ ggplot(validator_staleness_summary, aes(x = weighted_avg_days_since_change)) +
        x = "Weighted Backing Age (WBA)", y = "Frequency")
 ```
 
-The following table sorts each Validator based on their weighted backing age and provides the name and stash address. Validators without a set identity are labelled "pseudo-a".
+```{r, echo = FALSE}
+nr_table <- 30
+```
+
+The following table sorts active Validators based on their weighted backing age and provides prints the highest `r nr_table` entries. Validators without a set identity are labelled "pseudo-a".
 
 ```{r, echo = FALSE}
 merged_data <- validator_staleness_summary %>%
@@ -708,13 +712,13 @@ tmp %>%
     "Validator Name" = name,
     "Weighted Backing Age" = weighted_avg_days_since_change
   ) %>%
-  head(30) %>%
+  head(nr_table) %>%
   kable(caption = "Summary of Weighted Backing Age")
 ```
 
-**Note:** As mentioned above, the table above is purely descriptive and it does not necessarily mean that a large WBA is a bad thing. Validators that have a large WBA, by definition, also are long-time contributors to the Polkadot Network.
-
 The average WBA of all active Validators is `r round(mean(validator_staleness_summary$weighted_avg_days_since_change), digits = 0)` (and `r round(mean(subset(validator_staleness_summary, commission_percent < 100)$weighted_avg_days_since_change), digits = 0)` for Validators without 100% commission).
+
+**Note:** As mentioned above, the table above is purely descriptive and it does not necessarily mean that a large WBA is a bad thing. Validators that have a large WBA, by definition, also are long-time contributors to the Polkadot Network.
 
 # Conclusion
 
