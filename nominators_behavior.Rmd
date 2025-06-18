@@ -34,6 +34,8 @@ bigrquery::bq_auth(email = "jonas@web3.foundation", cache = TRUE)
 
 # Authenticate googleCloudStorageR using the token obtained by bigrquery
 gcs_auth(token = bq_token())
+# Specify folder in case you already got staking data .csv
+path <- "~/Documents/staking-data"
 ```
 
 ```{r, message=FALSE, echo = FALSE}
@@ -46,9 +48,9 @@ chain = "polkadot"
 time_offset <- 6
 # The amount of tables that should be downloaded
 #37*6
-number_tables <- 229*7
+number_tables <- 71*26
 # The sessions to analyze.
-last_session = 9626 # 9442 for one of last sessions with 297 vals
+last_session = 11080 # 9442 for one of last sessions with 297 vals
 first_session = last_session - time_offset * number_tables
 
 difference = last_session - first_session 
@@ -64,7 +66,7 @@ missing_pool_info <- 0
 
 ```{r, echo=FALSE}
 # Parameters to determine whether a change in bonded amount was due to auto-compound or an active choice. Here, we pretend that an increase by bonded_amount * APY / 365 is a compound. I.e., if the change from old to new balance is less than that, we pretend its not an active choice. Making APY higher increases the range where we pretend it was an auto compound.
-APY <- 0.18
+APY <- 0.15
 number_session_per_era <- 6  # Payout happens every 6 sessions
 payout_periods <- ceiling(time_offset / number_session_per_era)  # How many payout periods are covered by time_offset
 threshold <- 1 + payout_periods * (APY / 365)
@@ -332,10 +334,9 @@ calculate_days_since_change <- function(overall_nominators, session_timestamps) 
 
 ```{r, echo=FALSE, message = FALSE, warning = FALSE, results = 'hide'}
 # Getting the first nominators data set to start the process
-nominators_t0 <- getStakingDataNew("nominators", "session", sessions[1], chain, "online", TRUE)
-
+nominators_t0 <- polkadotutils::importStakingData("nominators", "session", sessions[1], chain, TRUE, path)
 # Getting the newest validator information (which we need later)
-validator_newest <- polkadotutils::getStakingDataNew("validators", "session", last_session, chain, "online", TRUE)
+validator_newest <- polkadotutils::importStakingData("validators", "session", last_session, chain, TRUE, path)
 # Collect some garbage
 gc()
 
@@ -352,7 +353,7 @@ for (i in 2:length(sessions)) {
   # Try to download the next session's nominator data
   nominators_next <- tryCatch(
     {
-      getStakingDataNew("nominators", "session", sessions[i], chain, "online", TRUE)
+      importStakingData("nominators", "session", sessions[i], chain, TRUE, path)
     },
     error = function(e) {
       message(paste("Error in session", sessions[i], "- skipping. Error message:", e$message))
